@@ -4208,6 +4208,8 @@ class AutopilotIn(BaseModel):
                                        # so the picked index maps to what the user saw
     sound_design: bool = True          # generate + mix ElevenLabs SFX + loudnorm
     dynamic: bool = True               # reaction-rich, varied-background scenes
+    fresh: bool = True                 # wipe the previous run's frames/video/etc.
+                                       # before generating so they don't mix
 
 
 # --- Autopilot run control: stop flag + per-step deadline ------------------- #
@@ -4314,6 +4316,55 @@ def api_autopilot_progress(run_id: str):
     p["elapsed"] = round(elapsed, 1)
     p["eta_seconds"] = eta
     return p
+
+
+def _reset_generated(delete_files=True):
+    """Clear the previous run's GENERATED media so a fresh autopilot run doesn't
+    append onto (and desync with) old frames. Keeps the world bible, the topic
+    list (yt_inspiration), brand, music and voice map. Deletes the orphaned media
+    files from disk too ('erased from site') to reclaim space."""
+    st = store.load_state()
+    paths = []
+
+    def _collect(u):
+        if u:
+            try:
+                paths.append(store.url_to_path(u))
+            except Exception:
+                pass
+
+    for s in st.get("sequence") or []:
+        _collect(s.get("image_url"))
+    for e in st.get("edits") or []:
+        _collect(e.get("url"))
+    for t in st.get("thumbnails") or []:
+        _collect(t.get("url"))
+        _collect(t.get("raw_url"))
+    for c in st.get("characters") or []:
+        _collect(c.get("sheet_url"))
+    for x in st.get("sfx") or []:
+        _collect(x.get("url"))
+    _collect((st.get("voiceover") or {}).get("url"))
+    _collect((st.get("audio") or {}).get("url"))
+
+    st["sequence"] = []
+    st["edits"] = []
+    st["thumbnails"] = []
+    st["characters"] = []
+    st["sfx"] = []
+    st["voiceover"] = None
+    st["audio"] = None
+    st["script"] = None
+    st["seo"] = None
+    store.save_state(st)
+
+    if delete_files:
+        for p in paths:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    return st
 
 
 def _sort_by_virality(suggestions):
@@ -4427,6 +4478,12 @@ def api_autopilot(body: AutopilotIn, request: Request):
                 "topic": insp.get("topic", "")}
     steps.append({"step": "analyse", "suggestions": len(suggestions),
                   "cached": bool(use_cache)})
+
+    # Fresh start: wipe the PREVIOUS run's frames/characters/video/thumbnail/
+    # voiceover so this generation doesn't append onto stale frames and desync.
+    # (yt_inspiration/topics + world bible are preserved.)
+    if body.fresh:
+        _reset_generated(delete_files=True)
 
     # ---- STEP 2: Pick a suggestion and generate a script ----
     _check_stop(run_id)
