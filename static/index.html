@@ -4057,41 +4057,79 @@ async function runAutopilot(idx=0, fromCache=false){
   const step_timeout=parseFloat(($("#apStepTimeout")||{}).value)||60;
   AP_STEP_LIMIT=step_timeout;
   AP_RUN_ID="run_"+Date.now()+"_"+Math.random().toString(36).slice(2,7);
+  $("#apTopics").style.display="none";
   const prog=$("#apProgress"); prog.style.display="block";
-  prog.innerHTML=AP_STEP_NAMES.map((s,i)=>`<div class="ap-step" id="aps${i}"><div class="ap-dot wait"></div><span>${s}</span> <span class="ap-time" style="font-size:11px;color:var(--muted);margin-left:auto"></span></div>`).join("");
-  apSetStep(0); apStartTimer();
-  // The backend runs steps server-side; we advance the visible dots on a soft
-  // schedule and let the per-step timer show when it's overrunning. The real
-  // Stop is enforced between steps server-side.
-  const softAdvance=setInterval(()=>{ if(AP_CUR_STEP<AP_STEP_NAMES.length-1){ const sec=(Date.now()-AP_STEP_START)/1000; if(sec>AP_STEP_LIMIT) apSetStep(AP_CUR_STEP+1); } },1000);
+  prog.innerHTML=`<div class="q-head"><div class="q-bar"><div class="q-fill" id="apFill" style="width:0%"></div></div><span class="q-stat" id="apStat">starting…</span></div>`+
+    `<div style="margin-top:10px">`+AP_STEP_NAMES.map((s,i)=>`<div class="ap-step" id="aps${i}"><div class="ap-dot wait"></div><span>${s}</span></div>`).join("")+`</div>`;
+  apMark(0,"active");
+  // Real progress: poll the server for step + how many images are done + ETA.
+  const poll=setInterval(async()=>{
+    try{ const p=await api("/api/autopilot/progress/"+AP_RUN_ID); if(p&&!p.unknown) apPaint(p); }catch(_){}
+  },1500);
   const b=$("#apBtn"); busy(b,true,"Running — this may take several minutes…");
   $("#apStopBtn").style.display="inline-flex"; $("#apRegenBtn").style.display="none";
   try{
     const d=await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,nudge,target_seconds,voice_id,run_id:AP_RUN_ID,step_timeout,suggestion_index:idx,from_cache:fromCache})});
-    clearInterval(softAdvance); clearInterval(AP_TIMER);
+    clearInterval(poll);
     STATE=await api("/api/state").then(r=>r.state);
     renderBoard(); renderCharacters(); renderCast(); renderEditsList();
     if(d.stopped){
       AP_STEP_NAMES.forEach((_,i)=>{const dot=document.querySelector(`#aps${i} .ap-dot`);if(dot&&dot.classList.contains("wait"))dot.className="ap-dot";});
+      $("#apStat").textContent="stopped";
       $("#apResult").innerHTML=`<div style="color:var(--amber);font-size:13px">⏹ Stopped — finished steps were kept. Press Regenerate to run again.</div>`;
       toast("Autopilot stopped","");
     } else {
       AP_STEP_NAMES.forEach((_,i)=>apMark(i,"done"));
+      const apf=$("#apFill"); if(apf) apf.style.width="100%"; $("#apStat").textContent="done ✓";
+      const framesDone=(d.steps||[]).find(s=>s.step==="frames")?.rendered||0;
       let html='<div class="ap-result">';
-      if(d.video_url) html+=`<div><video controls src="${d.video_url}" style="max-width:340px;border-radius:10px;border:1px solid var(--line)"></video><div style="font-size:12px;color:var(--teal);margin-top:4px">${d.total_duration||0}s · ${(d.steps||[]).find(s=>s.step==="frames")?.rendered||0} frames</div></div>`;
+      if(d.video_url) html+=`<div><video controls src="${d.video_url}" style="max-width:340px;border-radius:10px;border:1px solid var(--line)"></video><div style="font-size:12px;color:var(--teal);margin-top:4px">${d.total_duration||0}s · ${framesDone} frames</div></div>`;
       if(d.thumbnail_url) html+=`<div><img src="${d.thumbnail_url}" style="max-width:200px;border-radius:8px;border:1px solid var(--line)"/><div style="font-size:12px;color:var(--muted);margin-top:4px">Thumbnail</div></div>`;
       html+=`<div style="font-size:13px;color:var(--ink)"><strong>${_esc(d.suggestion?.title||'')}</strong><br><span style="color:var(--muted)">${_esc(d.suggestion?.logline||'')}</span></div>`;
       html+='</div>';
-      if(d.video_url) html+=`<div style="margin-top:10px"><a class="btn outline sm" href="${d.video_url}" download>Download MP4</a></div>`;
+      if(d.seo) html+=apSeoHtml(d.seo);
+      html+=`<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap"><a class="btn glow sm" href="/api/export/package" download>⬇ Download project ZIP (video + SEO)</a>`;
+      if(d.video_url) html+=`<a class="btn outline sm" href="${d.video_url}" download>MP4 only</a>`;
+      html+=`</div>`;
       $("#apResult").innerHTML=html;
-      toast("Autopilot complete — video + thumbnail ready","ok"); confettiBurst();
+      autoDownloadZip();   // auto-download the full package (video + YT SEO file)
+      toast("Autopilot complete — downloading ZIP (video + SEO)","ok"); confettiBurst();
     }
   }catch(e){
-    clearInterval(softAdvance); clearInterval(AP_TIMER);
+    clearInterval(poll);
     AP_STEP_NAMES.forEach((_,i)=>{const dot=document.querySelector(`#aps${i} .ap-dot`);if(dot&&dot.classList.contains("wait"))dot.className="ap-dot";});
     toast(e.message,"err");
     $("#apResult").innerHTML=`<div style="color:var(--red);font-size:13px">Failed: ${_esc(e.message)}</div>`;
   }finally{ busy(b,false); $("#apStopBtn").style.display="none"; $("#apRegenBtn").style.display="inline-flex"; AP_RUN_ID=null; }
+}
+const AP_STEP_LABELS={analyse:"Analysing video",script:"Writing script",characters:"Character sheets",frames:"Rendering frames",video:"Building video",thumbnail:"Thumbnail",seo:"YouTube SEO"};
+function _fmtDur(s){ s=Math.max(0,Math.round(s||0)); const m=Math.floor(s/60); return m? `${m}m ${s%60}s` : `${s}s`; }
+function apPaint(p){
+  const total=AP_STEP_NAMES.length, idx=Math.min(total-1, p.step_index||0);
+  for(let i=0;i<total;i++) apMark(i, p.done? "done" : (i<idx?"done":(i===idx?"active":"wait")));
+  let pct=(idx/total)*100;
+  if(p.step==="frames" && p.frames_total) pct=((idx + (p.frames_done||0)/p.frames_total)/total)*100;
+  if(p.done) pct=100;
+  const bar=$("#apFill"); if(bar) bar.style.width=Math.min(100,Math.max(2,pct))+"%";
+  const bits=[];
+  bits.push(AP_STEP_LABELS[p.step]||p.step||"working");
+  if(p.frames_total) bits.push(`🖼 ${p.frames_done||0}/${p.frames_total} images`);
+  if(p.chars_total) bits.push(`◈ ${p.chars_done||0}/${p.chars_total} cast`);
+  if(p.eta_seconds!=null && !p.done) bits.push(`⏱ ~${_fmtDur(p.eta_seconds)} left`);
+  if(p.elapsed!=null) bits.push(`${_fmtDur(p.elapsed)} elapsed`);
+  const st=$("#apStat"); if(st) st.textContent=bits.join("  ·  ");
+}
+function apSeoHtml(seo){
+  const titles=seo.titles||(seo.title?[seo.title]:[]);
+  const tags=(seo.tags||[]).join(", ");
+  let h=`<div style="margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.02)"><div style="font-weight:700;font-size:13px;margin-bottom:6px">🔎 YouTube SEO <span style="font-weight:400;color:var(--muted);font-size:11px">(also saved in the ZIP)</span></div>`;
+  if(titles.length) h+=`<div style="font-size:12px;margin-bottom:6px"><span style="color:var(--muted)">Titles:</span><br>${titles.map(t=>"• "+_esc(t)).join("<br>")}</div>`;
+  if(seo.description) h+=`<div style="font-size:12px;margin-bottom:6px"><span style="color:var(--muted)">Description:</span><br>${_esc(seo.description).slice(0,400)}</div>`;
+  if(tags) h+=`<div style="font-size:11px;color:var(--muted)">Tags: ${_esc(tags)}</div>`;
+  return h+`</div>`;
+}
+function autoDownloadZip(){
+  try{ const a=document.createElement("a"); a.href="/api/export/package"; a.download=""; document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),1000); }catch(_){}
 }
 
 /* ---------- WORKFLOW CANVAS (n8n-style) ---------- */

@@ -3410,12 +3410,30 @@ def api_webhook_test(request: Request):
         raise HTTPException(500, f"webhook failed: {e}")
 
 
+def _seo_text(seo: dict, title: str) -> str:
+    """Render a saved SEO dict into a copy-paste-ready YouTube upload sheet."""
+    titles = seo.get("titles") or ([seo["title"]] if seo.get("title") else [])
+    tags = seo.get("tags") or []
+    hashtags = seo.get("hashtags") or [t for t in tags if t][:5]
+    lines = ["# YouTube upload sheet", ""]
+    lines.append("## Title options")
+    lines += [f"- {t}" for t in titles] or [f"- {title}"]
+    lines += ["", "## Description", (seo.get("description") or "").strip(), ""]
+    if tags:
+        lines += ["## Tags (comma-separated)", ", ".join(tags), ""]
+    if hashtags:
+        hs = " ".join(h if str(h).startswith("#") else f"#{h}" for h in hashtags)
+        lines += ["## Hashtags", hs, ""]
+    return "\n".join(lines).strip() + "\n"
+
+
 @app.get("/api/export/package")
 def api_export_package(script: bool = True, prompts: bool = True,
                        characters: bool = True, frames: bool = True,
-                       voiceover: bool = True, video: bool = True):
+                       voiceover: bool = True, video: bool = True,
+                       seo: bool = True):
     """Bundle the project into one ZIP. Query flags select what to include
-    (selective export): script, prompts, characters, frames, voiceover, video."""
+    (selective export): script, prompts, characters, frames, voiceover, video, seo."""
     st = store.load_state()
     scr = st.get("script") or {}
     title = (scr.get("title") or "").strip() or "continuity-project"
@@ -3426,6 +3444,11 @@ def api_export_package(script: bool = True, prompts: bool = True,
         if script and scr:
             z.writestr(f"{root}/script.json",
                        json.dumps(scr, indent=2, ensure_ascii=False))
+
+        if seo and st.get("seo"):
+            z.writestr(f"{root}/youtube_seo.txt", _seo_text(st["seo"], title))
+            z.writestr(f"{root}/youtube_seo.json",
+                       json.dumps(st["seo"], indent=2, ensure_ascii=False))
 
         if voiceover:
             vo = (scr.get("voiceover") or "").strip()
@@ -4078,6 +4101,44 @@ def api_autopilot_stop(body: AutopilotStopIn):
     return {"ok": True, "run_id": body.run_id}
 
 
+# --- Live autopilot progress (drives the progress bar + ETA in the UI) ------ #
+_AUTOPILOT_PROGRESS = {}
+AP_STEPS = ["analyse", "script", "characters", "frames", "video", "thumbnail", "seo"]
+
+
+def _ap_prog(run_id, **kw):
+    if not run_id:
+        return
+    with _AUTOPILOT_LOCK:
+        p = _AUTOPILOT_PROGRESS.setdefault(run_id, {
+            "run_id": run_id, "started": time.time(), "steps_total": len(AP_STEPS),
+            "step": "", "step_index": 0, "chars_done": 0, "chars_total": 0,
+            "frames_done": 0, "frames_total": 0, "done": False, "video_url": None,
+        })
+        if "step" in kw:
+            kw["step_index"] = AP_STEPS.index(kw["step"]) if kw["step"] in AP_STEPS else p["step_index"]
+        p.update(kw)
+
+
+@app.get("/api/autopilot/progress/{run_id}")
+def api_autopilot_progress(run_id: str):
+    with _AUTOPILOT_LOCK:
+        p = dict(_AUTOPILOT_PROGRESS.get(run_id) or {})
+    if not p:
+        return {"run_id": run_id, "unknown": True}
+    # Server-computed ETA from the dominant (frames) work + elapsed time.
+    elapsed = max(0.0, time.time() - p.get("started", time.time()))
+    done = p.get("frames_done", 0)
+    total = p.get("frames_total", 0)
+    eta = None
+    if total and done:
+        rate = elapsed / max(1, done)        # seconds per frame so far
+        eta = round(rate * max(0, total - done), 1)
+    p["elapsed"] = round(elapsed, 1)
+    p["eta_seconds"] = eta
+    return p
+
+
 def _sort_by_virality(suggestions):
     """Most-viral-first, stable. Missing scores sink to the bottom."""
     return sorted(suggestions or [],
@@ -4177,6 +4238,7 @@ def api_autopilot(body: AutopilotIn, request: Request):
     # ---- STEP 1: Topics ----
     # Reuse the exact list the user picked from (so suggestion_index lines up);
     # otherwise analyse fresh. Either way they're ranked by virality.
+    _ap_prog(run_id, step="analyse")
     cached = (store.load_state().get("yt_inspiration") or {})
     use_cache = (body.from_cache and cached.get("suggestions")
                  and cached.get("url") == body.url)
@@ -4191,6 +4253,7 @@ def api_autopilot(body: AutopilotIn, request: Request):
 
     # ---- STEP 2: Pick a suggestion and generate a script ----
     _check_stop(run_id)
+    _ap_prog(run_id, step="script")
     st = store.load_state()
     pick = suggestions[min(max(0, body.suggestion_index), len(suggestions) - 1)]
     title = pick.get("title", "")
@@ -4230,6 +4293,10 @@ def api_autopilot(body: AutopilotIn, request: Request):
     # ---- STEP 3: Generate character sheets ----
     _check_stop(run_id)
     chars = script.get("characters") or []
+    _scene_total = len([sc for sc in (script.get("scenes") or [])
+                        if (sc.get("prompt") or "").strip()])
+    _ap_prog(run_id, step="characters", chars_total=len(chars),
+             frames_total=_scene_total)
     img_client = get_image_client(request)
     char_created = []
     for c in chars:
@@ -4261,10 +4328,12 @@ def api_autopilot(body: AutopilotIn, request: Request):
                 char_created.append(val)
         except Exception:
             pass
+        _ap_prog(run_id, chars_done=len(char_created))
     steps.append({"step": "characters", "created": len(char_created)})
 
     # ---- STEP 4: Batch render sequence frames ----
     _check_stop(run_id)
+    _ap_prog(run_id, step="frames")
     scenes = script.get("scenes") or []
     frames_ok, frames_fail = 0, 0
     for sc in scenes:
@@ -4280,12 +4349,14 @@ def api_autopilot(body: AutopilotIn, request: Request):
             frames_ok += 1
         except Exception:
             frames_fail += 1
+        _ap_prog(run_id, frames_done=frames_ok + frames_fail)
     steps.append({"step": "frames", "rendered": frames_ok, "failed": frames_fail})
 
     # ---- STEP 5: Voice-over + video assembly (natural flow) ----
     #  ONE continuous narration track + frames timed to it + micro-cuts on long
     #  holds — the audio is never chopped per-scene, so it sounds natural.
     _check_stop(run_id)
+    _ap_prog(run_id, step="video")
     st = store.load_state()
     seq = st.get("sequence") or []
     video_url = None
@@ -4312,6 +4383,7 @@ def api_autopilot(body: AutopilotIn, request: Request):
 
     # ---- STEP 6: Thumbnail ----
     _check_stop(run_id)
+    _ap_prog(run_id, step="thumbnail", video_url=video_url)
     thumb_url = None
     try:
         thumb_title = title or (script.get("title") or "")
@@ -4361,6 +4433,32 @@ def api_autopilot(body: AutopilotIn, request: Request):
 
     steps.append({"step": "thumbnail", "url": thumb_url})
 
+    # ---- STEP 7: YouTube SEO pack (title options, description, tags) ----
+    _check_stop(run_id)
+    _ap_prog(run_id, step="seo", video_url=video_url)
+    seo = None
+    try:
+        st = store.load_state()
+        scr = st.get("script") or {}
+        seo_title = title or scr.get("title") or ""
+        seo_desc = "\n".join(filter(None, [
+            scr.get("logline") or pick.get("logline") or "",
+            (scr.get("voiceover") or "")[:1200],
+        ]))
+        ok, raw = _run_with_deadline(
+            lambda: _claude_client_for(body.model, request).seo(seo_title, seo_desc, 6),
+            step_to)
+        if ok and raw:
+            seo = extract_json(raw)
+            st = store.load_state()
+            st["seo"] = seo
+            store.save_state(st)
+            store.log_usage("script", 1, 0.005)
+    except Exception as ex:
+        print(f"[autopilot] seo step skipped: {ex}", flush=True)
+    steps.append({"step": "seo", "ok": bool(seo)})
+
+    _ap_prog(run_id, done=True, video_url=video_url)
     with _AUTOPILOT_LOCK:
         _AUTOPILOT_STOP.discard(run_id)
     return {
@@ -4371,4 +4469,5 @@ def api_autopilot(body: AutopilotIn, request: Request):
         "video_url": video_url,
         "thumbnail_url": thumb_url,
         "total_duration": total_seconds,
+        "seo": seo,
     }
