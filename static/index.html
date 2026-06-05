@@ -869,9 +869,10 @@
             <div style="min-width:160px">
               <input type="text" id="apNudge" placeholder="Creative nudge (optional)" style="width:100%"/>
             </div>
-            <button class="btn glow btn-primary" id="apBtn" onclick="runAutopilot()" style="white-space:nowrap">🚀 Launch Autopilot</button>
+            <button class="btn glow btn-primary" id="apBtn" onclick="findTopics()" style="white-space:nowrap">🔎 Find viral topics</button>
+            <button class="btn outline" id="apAutoBtn" onclick="runAutopilot(0,false)" style="white-space:nowrap" title="Skip picking — analyse and make the single highest-virality topic">⚡ Auto (top topic)</button>
             <button class="btn danger" id="apStopBtn" onclick="stopAutopilot()" style="white-space:nowrap; display:none">■ Stop</button>
-            <button class="btn outline" id="apRegenBtn" onclick="runAutopilot()" style="white-space:nowrap; display:none">↻ Regenerate</button>
+            <button class="btn outline" id="apRegenBtn" onclick="regenAutopilot()" style="white-space:nowrap; display:none">↻ Regenerate</button>
           </div>
           <div class="row" style="gap:10px; align-items:end; flex-wrap:wrap; margin-top:8px">
             <div style="min-width:150px">
@@ -888,6 +889,7 @@
               <input type="number" id="apStepTimeout" value="60" min="15" max="600" step="5" style="width:120px" title="Auto-proceed if a heavy step stalls past this"/>
             </div>
           </div>
+          <div id="apTopics" style="margin-top:14px; display:none"></div>
           <div id="apProgress" style="margin-top:12px; display:none"></div>
           <div id="apResult" style="margin-top:12px"></div>
         </div>
@@ -4003,9 +4005,52 @@ function apStartTimer(){
     el.style.color = over? "var(--amber)":"var(--muted)";
   },500);
 }
-async function runAutopilot(){
+let AP_TOPICS=[], AP_TOPICS_URL="", AP_LAST={idx:0,fromCache:false};
+function _viralBadge(score){
+  const s=Math.max(0,Math.min(100,parseInt(score)||0));
+  const col = s>=80?"var(--teal)" : s>=60?"var(--amber)" : s>=40?"var(--violet)" : "var(--muted)";
+  return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:${col};border:1px solid ${col};border-radius:999px;padding:2px 9px">🔥 ${s} virality</span>`;
+}
+function renderTopics(){
+  const wrap=$("#apTopics"); if(!wrap) return;
+  if(!AP_TOPICS.length){ wrap.style.display="none"; return; }
+  wrap.style.display="block";
+  let html=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Pick a topic to produce — fresh ideas in this channel's style, ranked by predicted virality (not a copy of the source):</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">`;
+  AP_TOPICS.forEach((t,i)=>{
+    html+=`<div class="build-card" style="display:flex;flex-direction:column;gap:6px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${_viralBadge(t.virality_score)}<span style="font-size:11px;color:var(--muted)">~${Math.round(t.total_duration||0)}s · ${t.num_characters||0} cast</span></div>
+      <strong style="font-size:14px;line-height:1.3">${_esc(t.title||("Topic "+(i+1)))}</strong>
+      <div style="font-size:12px;color:var(--ink)">${_esc(t.logline||"")}</div>
+      ${t.hook?`<div style="font-size:11px;color:var(--teal)">Hook: ${_esc(t.hook)}</div>`:""}
+      ${t.distinct_angle?`<div style="font-size:11px;color:var(--muted)">↳ Fresh angle: ${_esc(t.distinct_angle)}</div>`:""}
+      ${t.virality_reason?`<div style="font-size:11px;color:var(--muted)">Why it pops: ${_esc(t.virality_reason)}</div>`:""}
+      <button class="btn sm glow btn-primary" style="margin-top:6px;justify-content:center" onclick="runAutopilot(${i},true)">🚀 Make this video</button>
+    </div>`;
+  });
+  html+=`</div>`;
+  wrap.innerHTML=html;
+}
+async function findTopics(){
+  const url=($("#apUrl")||{}).value||""; if(!url.trim()){toast("Paste a YouTube link","err");return;}
+  if(!CFG.has_claude_key){ toast("Add your Claude key in Settings first","err"); openSettings(); return; }
+  const nudge=($("#apNudge")||{}).value||"";
+  const b=$("#apBtn"); busy(b,true,"Analysing & ranking topics…");
+  $("#apTopics").style.display="block"; $("#apTopics").innerHTML='<div style="color:var(--muted);font-size:13px">🔎 Studying the video and brainstorming viral angles…</div>';
+  try{
+    const d=await api("/api/autopilot/suggest",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,nudge})});
+    AP_TOPICS=d.suggestions||[]; AP_TOPICS_URL=url;
+    renderTopics();
+    toast(`${AP_TOPICS.length} topics ranked by virality`,"ok");
+  }catch(e){ toast(e.message,"err"); $("#apTopics").innerHTML=`<div style="color:var(--red);font-size:13px">Failed: ${_esc(e.message)}</div>`; }
+  finally{ busy(b,false); }
+}
+function regenAutopilot(){ runAutopilot(AP_LAST.idx, AP_LAST.fromCache); }
+async function runAutopilot(idx=0, fromCache=false){
   const url=($("#apUrl")||{}).value||""; if(!url.trim()){toast("Paste a YouTube link","err");return;}
   if(!CFG.has_api_key||!CFG.has_claude_key||!CFG.has_elevenlabs_key){ toast("Set all 3 API keys (image, Claude, ElevenLabs) in Settings first","err"); openSettings(); return; }
+  // a cached pick is only valid for the URL we analysed
+  if(fromCache && url!==AP_TOPICS_URL) fromCache=false;
+  AP_LAST={idx,fromCache};
   const nudge=($("#apNudge")||{}).value||"";
   const target_seconds=parseFloat(($("#apLength")||{}).value)||null;
   const voice_id=($("#apVoice")||{}).value||undefined;
@@ -4022,7 +4067,7 @@ async function runAutopilot(){
   const b=$("#apBtn"); busy(b,true,"Running — this may take several minutes…");
   $("#apStopBtn").style.display="inline-flex"; $("#apRegenBtn").style.display="none";
   try{
-    const d=await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,nudge,target_seconds,voice_id,run_id:AP_RUN_ID,step_timeout})});
+    const d=await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,nudge,target_seconds,voice_id,run_id:AP_RUN_ID,step_timeout,suggestion_index:idx,from_cache:fromCache})});
     clearInterval(softAdvance); clearInterval(AP_TIMER);
     STATE=await api("/api/state").then(r=>r.state);
     renderBoard(); renderCharacters(); renderCast(); renderEditsList();

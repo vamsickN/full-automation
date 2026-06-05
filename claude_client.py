@@ -465,6 +465,10 @@ class ClaudeClient:
             '  "suggestions": [ {\n'
             '     "title": str,\n'
             '     "logline": str,                 // one punchy sentence\n'
+            '     "hook": str,                    // the first-3-seconds opening line/visual\n'
+            '     "distinct_angle": str,          // how this DIFFERS from the source (fresh, NOT a re-upload)\n'
+            '     "virality_score": int,          // 1-100 predicted virality\n'
+            '     "virality_reason": str,         // why it could pop (hook, format, timeliness, emotion)\n'
             '     "num_characters": int,          // 0-8 recurring characters\n'
             '     "characters": [ {"name": str, "sheet_prompt": str} ],\n'
             '     "voiceover_style": str,          // how this VO should sound\n'
@@ -476,6 +480,13 @@ class ClaudeClient:
             "}\n"
             f"RULES:\n- Produce EXACTLY {n_suggestions} suggestions, varied but all "
             "true to the reference's style and audience.\n"
+            "- Each idea must be a FRESH, DISTINCT concept — same niche/energy as the "
+            "source but NOT a copy or re-upload of it. distinct_angle states plainly "
+            "what makes it new.\n"
+            "- Score virality_score honestly (1-100): reward a strong hook, an "
+            "emotional or surprising payoff, a repeatable format, broad relatability "
+            "and timeliness. ORDER the suggestions from HIGHEST to LOWEST "
+            "virality_score (most viral first).\n"
             "- characters[].sheet_prompt is ONE rich paragraph of that character's "
             "canonical look, ready for a character-sheet generator. If num_characters "
             "is 0, characters is an empty list.\n"

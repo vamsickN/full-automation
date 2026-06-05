@@ -4006,6 +4006,8 @@ class AutopilotIn(BaseModel):
     run_id: Optional[str] = None       # client token so a run can be stopped
     step_timeout: float = 60.0         # auto-proceed if a heavy step stalls past this
     max_hold: float = 6.0              # split frames longer than this into micro-cuts
+    from_cache: bool = False           # reuse the topics from a prior /suggest call
+                                       # so the picked index maps to what the user saw
 
 
 # --- Autopilot run control: stop flag + per-step deadline ------------------- #
@@ -4076,6 +4078,79 @@ def api_autopilot_stop(body: AutopilotStopIn):
     return {"ok": True, "run_id": body.run_id}
 
 
+def _sort_by_virality(suggestions):
+    """Most-viral-first, stable. Missing scores sink to the bottom."""
+    return sorted(suggestions or [],
+                  key=lambda x: float(x.get("virality_score") or 0), reverse=True)
+
+
+def _autopilot_analyze(url, nudge, model, request, n_suggestions=10):
+    """Shared step 1: ingest a YouTube ref, get fresh on-style ideas ranked by
+    virality, save them as yt_inspiration, and return the inspiration dict."""
+    import youtube
+    if not youtube.is_youtube_url(url):
+        raise HTTPException(400, "That doesn't look like a YouTube link.")
+    try:
+        ref = youtube.ingest(url, max_frames=12)
+    except Exception as e:
+        raise HTTPException(400, f"Couldn't read that video: {e}")
+    frame_imgs = []
+    for u in ref.get("frame_urls", [])[:12]:
+        try:
+            frame_imgs.append(pipeline.downsize_for_vision(store.read_image(u)))
+        except Exception:
+            pass
+    st = store.load_state()
+    claude = _claude_client_for(model, request)
+    try:
+        raw = claude.suggest_from_reference(
+            frames=frame_imgs, transcript=ref.get("transcript", ""),
+            source_title=ref.get("title", ""), source_channel=ref.get("channel", ""),
+            nudge=nudge, master_prompt=st["master_prompt"],
+            n_suggestions=n_suggestions)
+        analysis = extract_json(raw)
+    except Exception as e:
+        raise HTTPException(500, f"YT analysis failed: {e}")
+    suggestions = _sort_by_virality(analysis.get("suggestions") or [])
+    if not suggestions:
+        raise HTTPException(500, "Analysis returned no suggestions.")
+    insp = {
+        "url": url, "resolved_url": ref.get("url"), "video_id": ref.get("video_id"),
+        "title": ref.get("title", ""), "channel": ref.get("channel", ""),
+        "style_summary": analysis.get("style_summary", ""),
+        "speech_style": analysis.get("speech_style", ""),
+        "topic": analysis.get("topic", ""),
+        "frames": ref.get("frame_urls", []),
+        "suggestions": suggestions, "created": store.now(),
+    }
+    st["yt_inspiration"] = insp
+    store.save_state(st)
+    store.log_usage("script", 1, 0.01)
+    return insp
+
+
+class AutopilotSuggestIn(BaseModel):
+    url: str
+    nudge: str = ""
+    model: Optional[str] = None
+    n_suggestions: int = 10
+
+
+@app.post("/api/autopilot/suggest")
+def api_autopilot_suggest(body: AutopilotSuggestIn, request: Request):
+    """Phase 1 of the workflow: analyse the reference and return fresh, on-style
+    video ideas ranked by predicted virality — so the user can PICK which one to
+    produce (instead of always making the first/same one). No media is generated."""
+    s = request.state.settings
+    if not s["claude_api_key"]:
+        raise HTTPException(400, "No Claude API key — add it in Settings.")
+    insp = _autopilot_analyze(body.url, body.nudge, body.model, request,
+                              max(1, min(15, body.n_suggestions)))
+    return {"ok": True, "url": insp["url"], "title": insp["title"],
+            "channel": insp["channel"], "style_summary": insp["style_summary"],
+            "topic": insp["topic"], "suggestions": insp["suggestions"]}
+
+
 @app.post("/api/autopilot")
 def api_autopilot(body: AutopilotIn, request: Request):
     """One-click pipeline: YouTube link -> analyse -> script -> characters ->
@@ -4093,65 +4168,31 @@ def api_autopilot(body: AutopilotIn, request: Request):
         _AUTOPILOT_STOP.discard(run_id)
     step_to = max(15.0, float(body.step_timeout or 60.0))
 
-    import youtube
-    if not youtube.is_youtube_url(body.url):
-        raise HTTPException(400, "That doesn't look like a YouTube link.")
-
     quality = body.quality or config.DEFAULT_QUALITY
     size = body.size or config.DEFAULT_SIZE
     voice_id = body.voice_id or s["elevenlabs_voice_id"]
+    claude = _claude_client_for(body.model, request)
     steps = []
 
-    # ---- STEP 1: Analyse the YouTube reference ----
-    try:
-        ref = youtube.ingest(body.url, max_frames=12)
-    except Exception as e:
-        raise HTTPException(400, f"Couldn't read that video: {e}")
-
-    frame_imgs = []
-    for u in ref.get("frame_urls", [])[:12]:
-        try:
-            frame_imgs.append(pipeline.downsize_for_vision(store.read_image(u)))
-        except Exception:
-            pass
-
-    st = store.load_state()
-    claude = _claude_client_for(body.model, request)
-    try:
-        raw = claude.suggest_from_reference(
-            frames=frame_imgs,
-            transcript=ref.get("transcript", ""),
-            source_title=ref.get("title", ""),
-            source_channel=ref.get("channel", ""),
-            nudge=body.nudge,
-            master_prompt=st["master_prompt"],
-            n_suggestions=10,
-        )
-        analysis = extract_json(raw)
-    except Exception as e:
-        raise HTTPException(500, f"YT analysis failed: {e}")
-
-    suggestions = analysis.get("suggestions") or []
-    if not suggestions:
-        raise HTTPException(500, "Analysis returned no suggestions.")
-
-    insp = {
-        "url": ref["url"], "video_id": ref["video_id"],
-        "title": ref.get("title", ""), "channel": ref.get("channel", ""),
-        "style_summary": analysis.get("style_summary", ""),
-        "speech_style": analysis.get("speech_style", ""),
-        "topic": analysis.get("topic", ""),
-        "frames": ref.get("frame_urls", []),
-        "suggestions": suggestions, "created": store.now(),
-    }
-    st["yt_inspiration"] = insp
-    store.save_state(st)
-    steps.append({"step": "analyse", "suggestions": len(suggestions)})
-    store.log_usage("script", 1, 0.01)
+    # ---- STEP 1: Topics ----
+    # Reuse the exact list the user picked from (so suggestion_index lines up);
+    # otherwise analyse fresh. Either way they're ranked by virality.
+    cached = (store.load_state().get("yt_inspiration") or {})
+    use_cache = (body.from_cache and cached.get("suggestions")
+                 and cached.get("url") == body.url)
+    insp = cached if use_cache else _autopilot_analyze(
+        body.url, body.nudge, body.model, request, 10)
+    suggestions = insp["suggestions"]
+    analysis = {"style_summary": insp.get("style_summary", ""),
+                "speech_style": insp.get("speech_style", ""),
+                "topic": insp.get("topic", "")}
+    steps.append({"step": "analyse", "suggestions": len(suggestions),
+                  "cached": bool(use_cache)})
 
     # ---- STEP 2: Pick a suggestion and generate a script ----
     _check_stop(run_id)
-    pick = suggestions[min(body.suggestion_index, len(suggestions) - 1)]
+    st = store.load_state()
+    pick = suggestions[min(max(0, body.suggestion_index), len(suggestions) - 1)]
     title = pick.get("title", "")
     desc = "\n\n".join(filter(None, [
         pick.get("logline", ""),
