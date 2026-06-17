@@ -241,41 +241,83 @@ def contact_sheet(images, labels=None, max_cols=2, cell=896, bg=(17, 17, 19)):
 
     labels = list(labels or [])
     n = len(imgs)
+
+    def _make_font(px):
+        for _fname in ("arialbd.ttf", "Arial_Bold.ttf",
+                       "DejaVuSans-Bold.ttf", "arial.ttf"):
+            try:
+                return ImageFont.truetype(_fname, px)
+            except Exception:
+                continue
+        try:
+            return ImageFont.load_default()
+        except Exception:
+            return None
+
+    def _is_style(idx):
+        return idx < len(labels) and "STYLE REF" in (labels[idx] or "").upper()
+
+    def _paste(canvas, draw, im, ox, oy, box, lbl, lbl_px):
+        """Paste ``im`` fitted into a ``box``-square at (ox, oy), captioned."""
+        im = im.copy()
+        im.thumbnail((box, box))
+        x = ox + (box - im.width) // 2
+        y = oy + (box - im.height) // 2
+        canvas.paste(im, (x, y))
+        if not lbl:
+            return
+        font = _make_font(lbl_px)
+        if font is None:
+            return
+        try:
+            tw = int(draw.textlength(lbl, font=font))
+        except Exception:
+            tw = len(lbl) * lbl_px
+        pad = max(3, box // 80)
+        bar_h = lbl_px + pad * 2
+        draw.rectangle([ox, oy, ox + tw + pad * 3, oy + bar_h], fill=(0, 0, 0))
+        draw.text((ox + pad, oy + pad), lbl, fill=(255, 214, 110), font=font)
+
+    # The STYLE REF is the source of truth for the look. When it is present
+    # alongside other refs, give it its own LARGE dedicated cell across the top
+    # of the sheet so its rendering technique / palette / linework dominate the
+    # grid instead of being squished into a tiny equal-sized thumbnail. The
+    # remaining refs (character sheets, previous frame) sit in a smaller row
+    # below as supporting identity/continuity material.
+    style_idx = next((i for i in range(n) if _is_style(i)), None)
+    if style_idx is not None and n > 1:
+        others = [i for i in range(n) if i != style_idx]
+        ocols = min(max_cols, len(others)) or 1
+        small = max(1, cell // 2)              # supporting refs are half-size
+        big_w = ocols * small                  # style cell spans the full width
+        big_h = cell                           # full-size square for the style ref
+        orows = (len(others) + ocols - 1) // ocols
+        canvas = Image.new("RGB", (big_w, big_h + orows * small), bg)
+        draw = ImageDraw.Draw(canvas)
+        big_lbl = max(26, big_h // 24)
+        _paste(canvas, draw, imgs[style_idx], 0, 0, big_w,
+               labels[style_idx] if style_idx < len(labels) else "STYLE REF — COPY THIS LOOK",
+               big_lbl)
+        # constrain the (possibly wide) style image to the big cell height
+        sm_lbl = max(18, small // 26)
+        for j, oi in enumerate(others):
+            r, c = divmod(j, ocols)
+            _paste(canvas, draw, imgs[oi], c * small, big_h + r * small, small,
+                   labels[oi] if oi < len(labels) else "", sm_lbl)
+        out = BytesIO()
+        canvas.save(out, format="PNG")
+        return out.getvalue()
+
+    # Uniform grid (no style ref, or a single image).
     cols = 1 if n == 1 else min(max_cols, n)
     rows = (n + cols - 1) // cols
     canvas = Image.new("RGB", (cols * cell, rows * cell), bg)
     draw = ImageDraw.Draw(canvas)
-    font = None
-    for _fname in ("arialbd.ttf", "Arial_Bold.ttf", "DejaVuSans-Bold.ttf", "arial.ttf"):
-        try:
-            font = ImageFont.truetype(_fname, max(22, cell // 28))
-            break
-        except Exception:
-            continue
-    if font is None:
-        try:
-            font = ImageFont.load_default()
-        except Exception:
-            font = None
-
+    lbl_px = max(22, cell // 28)
     for idx, im in enumerate(imgs):
-        im = im.copy()
-        im.thumbnail((cell, cell))
         r, c = divmod(idx, cols)
-        x = c * cell + (cell - im.width) // 2
-        y = r * cell + (cell - im.height) // 2
-        canvas.paste(im, (x, y))
-        lbl = labels[idx] if idx < len(labels) else ""
-        if lbl and font is not None:
-            bx, by = c * cell, r * cell
-            try:
-                tw = int(draw.textlength(lbl, font=font))
-            except Exception:
-                tw = len(lbl) * (cell // 28)
-            pad = cell // 80
-            draw.rectangle([bx, by, bx + tw + pad * 3, by + (cell // 18)],
-                           fill=(0, 0, 0))
-            draw.text((bx + pad, by + pad), lbl, fill=(255, 214, 110), font=font)
+        _paste(canvas, draw, im, c * cell, r * cell, cell,
+               labels[idx] if idx < len(labels) else "", lbl_px)
     out = BytesIO()
     canvas.save(out, format="PNG")
     return out.getvalue()
