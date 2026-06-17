@@ -1056,6 +1056,190 @@
       transition-duration:.08s !important; scroll-behavior:auto !important;
     }
   }
+
+  /* ════════════════════════════════════════════════════════════════════
+     PREMIUM REDESIGN LAYER  —  cohesive coral/indigo accent, deeper glass,
+     refined typography & micro-interactions. Pure restyle: every selector
+     below targets existing classes/ids; no markup or JS contracts touched.
+     Lite-mode & reduced-motion safe (cheap shadows, no new always-on anims).
+     ════════════════════════════════════════════════════════════════════ */
+  :root{
+    /* deeper, cooler near-black base for more contrast & premium depth */
+    --bg:#070710; --bg2:#0c0c16; --panel:#13131f; --panel2:#191926;
+    --line:#23233a; --line2:#34344f;
+    --ink:#f4f3f8; --muted:#a7a4bd; --faint:#6f6c89;
+    /* unify the palette around the coral primary + one cool secondary;
+       legacy amber/violet/teal kept as harmonised supporting hues */
+    --accent:#e0805c; --accent-soft:#f0a585; --accent-deep:#c3623f;
+    --cool:#7c7cff; --cool-soft:#a3a3ff;
+    --amber:#e0805c; --amber-soft:#f0a585;
+    --violet:#7c7cff; --teal:#3fcabc;
+    --glow-amber:rgba(224,128,92,.34); --glow-violet:rgba(124,124,255,.30);
+    --glow-teal:rgba(63,202,188,.24);
+    --claude:#e0805c; --claude-soft:#f0a585; --claude-deep:#c3623f;
+    --radius:16px; --radius-lg:22px; --radius-sm:12px;
+    /* layered, soft premium elevation */
+    --shadow:0 1px 0 rgba(255,255,255,.04), 0 20px 50px -24px rgba(0,0,0,.85), 0 8px 18px -12px rgba(0,0,0,.6);
+    --ring:0 0 0 1px rgba(255,255,255,.04);
+  }
+  body{font-size:15px; letter-spacing:.002em}
+  /* calmer ambient field — subtle, single soft wash (still disabled in lite) */
+  body::after{
+    background:
+      radial-gradient(900px 560px at 12% -6%, rgba(224,128,92,.10), transparent 58%),
+      radial-gradient(820px 560px at 90% 2%, rgba(124,124,255,.09), transparent 60%) !important;
+  }
+
+  /* ── command bar ─────────────────────────────────────────────── */
+  header{
+    padding:15px 32px; border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, rgba(14,14,24,.94), rgba(14,14,24,.72));
+    box-shadow:0 1px 0 rgba(255,255,255,.03);
+  }
+  .filmstrip{background:linear-gradient(150deg,var(--accent),var(--cool));
+    box-shadow:inset 0 0 0 3px var(--bg), 0 0 30px -6px var(--glow-amber)}
+  .wordmark{font-size:19px; letter-spacing:-.025em;
+    background:linear-gradient(96deg,var(--ink) 18%,var(--accent-soft) 72%,var(--cool-soft));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
+  .wordmark small{letter-spacing:.30em; -webkit-text-fill-color:var(--accent-soft); color:var(--accent-soft)}
+  .pill{border-radius:999px; border-color:var(--line2);
+    background:rgba(18,18,30,.7); box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+  .ghost-btn{border-radius:var(--radius-sm); border-color:var(--line2);
+    background:rgba(18,18,30,.6)}
+  .ghost-btn:hover{border-color:var(--accent); color:var(--accent-soft);
+    box-shadow:0 0 22px -10px var(--glow-amber)}
+
+  /* ── tabs ────────────────────────────────────────────────────── */
+  nav.tabs{gap:5px; padding-top:20px}
+  .tab{font-size:12px; font-weight:600; letter-spacing:.01em; padding:11px 17px;
+    border-radius:12px 12px 0 0; color:var(--muted)}
+  .tab:hover{background:rgba(255,255,255,.035); color:var(--ink)}
+  .tab.active{background:var(--panel); border-color:var(--line)}
+  .tab.active .n{color:var(--accent)}
+  .tab.active::after{background:linear-gradient(90deg,var(--accent),var(--cool))}
+
+  /* ── sheets / panels → richer glass ──────────────────────────── */
+  .sheet{
+    border-radius:0 var(--radius-lg) var(--radius-lg) var(--radius-lg);
+    border-color:var(--line);
+    background:linear-gradient(180deg, rgba(25,25,38,.78), rgba(19,19,31,.9));
+    box-shadow:var(--shadow), inset 0 1px 0 rgba(255,255,255,.05);
+    padding:34px;
+  }
+  .sheet::before{background:linear-gradient(90deg,transparent,var(--accent),var(--cool),transparent);
+    opacity:.55; left:28px; right:28px}
+  .card{border-radius:var(--radius); border-color:var(--line);
+    background:linear-gradient(180deg, rgba(22,22,34,.6), rgba(16,16,26,.7))}
+  .card:hover{border-color:var(--line2); transform:translateY(-3px);
+    box-shadow:0 22px 44px -22px rgba(0,0,0,.75)}
+
+  /* ── headings & rhythm ───────────────────────────────────────── */
+  h2.section{font-size:27px; font-weight:800; letter-spacing:-.025em;
+    background:linear-gradient(96deg,var(--ink) 28%,var(--accent-soft) 82%,var(--cool-soft));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
+  .sub{color:var(--muted); font-size:14px; margin-bottom:26px}
+  .label{font-size:10.5px; letter-spacing:.18em; color:var(--faint)}
+
+  /* ── inputs → quiet, tactile console fields ──────────────────── */
+  textarea,input[type=text],input[type=password],input[type=number],input[type=email],select{
+    border-radius:var(--radius-sm); background:rgba(0,0,0,.26);
+    border:1px solid var(--line2); padding:13px 15px;
+    transition:border-color .18s var(--ease-out), box-shadow .18s var(--ease-out), background .18s;
+  }
+  textarea:hover,input:hover,select:hover{border-color:#3f3f5e}
+  textarea:focus,input:focus,select:focus{border-color:var(--accent);
+    background:rgba(0,0,0,.34);
+    box-shadow:0 0 0 3px rgba(224,128,92,.18), 0 8px 22px -14px var(--glow-amber)}
+  ::placeholder{color:var(--faint); opacity:.85}
+
+  /* ── buttons → solid, confident, soft sheen ──────────────────── */
+  .btn{border-radius:var(--radius-sm); font-weight:600; font-size:13.5px;
+    padding:13px 22px; color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent-deep));
+    box-shadow:0 10px 26px -14px var(--glow-amber), inset 0 1px 0 rgba(255,255,255,.14);
+    transition:transform .2s var(--ease-spring), filter .2s, box-shadow .2s}
+  .btn:hover{filter:brightness(1.07); transform:translateY(-2px);
+    box-shadow:0 16px 34px -16px var(--glow-amber), inset 0 1px 0 rgba(255,255,255,.18)}
+  .btn:active{transform:translateY(0); filter:brightness(.97)}
+  .btn.glow,.btn.claude{background:linear-gradient(120deg,var(--accent),#ec9069 48%,var(--cool)); color:#fff}
+  .btn.violet{background:linear-gradient(120deg,var(--cool),#a3a3ff); color:#fff}
+  .btn.outline{background:transparent; color:var(--accent-soft); border:1px solid var(--line2);
+    box-shadow:none}
+  .btn.outline:hover{border-color:var(--accent); color:var(--accent);
+    background:rgba(224,128,92,.07); box-shadow:none}
+  .btn.danger{background:transparent; color:var(--red); border:1px solid rgba(255,90,77,.4); box-shadow:none}
+
+  /* ── AUTOPILOT FORM → prominent, clean hero panel ────────────── */
+  .autopilot-bar{
+    border:1px solid var(--line2); border-radius:var(--radius-lg);
+    padding:26px 28px; margin-bottom:22px;
+    background:linear-gradient(180deg, rgba(224,128,92,.07), rgba(124,124,255,.04)), var(--panel2);
+    box-shadow:var(--shadow), 0 0 50px -28px var(--glow-amber);
+  }
+  .ap-icon{filter:drop-shadow(0 6px 14px rgba(224,128,92,.5))}
+  .ap-title{font-family:var(--disp); font-weight:800; font-size:21px; letter-spacing:-.015em;
+    background:linear-gradient(96deg,var(--ink),var(--accent-soft));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
+  .ap-desc{color:var(--muted); font-size:13.5px; line-height:1.6}
+  .autopilot-bar textarea,.autopilot-bar input,.autopilot-bar select{font-size:14px}
+  /* group the option row into tidy, evenly-breathing fields */
+  .opts{gap:14px}
+  .opt{min-width:130px}
+  .opt .label{margin-bottom:8px}
+
+  /* ── range sliders → refined track + thumb (all browsers) ────── */
+  input[type=range]{-webkit-appearance:none; appearance:none; height:24px;
+    background:transparent; cursor:pointer; accent-color:var(--accent)}
+  input[type=range]::-webkit-slider-runnable-track{height:5px; border-radius:99px;
+    background:linear-gradient(90deg,var(--accent),var(--line2))}
+  input[type=range]::-moz-range-track{height:5px; border-radius:99px; background:var(--line2)}
+  input[type=range]::-moz-range-progress{height:5px; border-radius:99px; background:var(--accent)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none;
+    width:16px; height:16px; margin-top:-5.5px; border-radius:50%; background:#fff;
+    border:3px solid var(--accent); box-shadow:0 2px 8px rgba(0,0,0,.4); transition:transform .12s}
+  input[type=range]::-moz-range-thumb{width:14px; height:14px; border-radius:50%; background:#fff;
+    border:3px solid var(--accent); box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.12)}
+  input[type=range]:focus{outline:none}
+  input[type=range]:focus::-webkit-slider-thumb{box-shadow:0 0 0 4px rgba(224,128,92,.22)}
+
+  /* ── toggles, chips, badges ──────────────────────────────────── */
+  .toggle{border-radius:var(--radius-sm); border-color:var(--line2)}
+  .toggle.on{border-color:rgba(224,128,92,.5); background:rgba(224,128,92,.08)}
+  .toggle.on .switch{background:var(--accent)} .toggle.on .switch::after{background:#fff}
+  .chip:hover,.sg-chip:hover{border-color:var(--accent); color:var(--accent)}
+  .badge.cont{color:var(--accent-soft); border-color:rgba(224,128,92,.35); background:rgba(224,128,92,.06)}
+
+  /* ── progress bars ───────────────────────────────────────────── */
+  .q-fill,#apFill{background:linear-gradient(90deg,var(--accent),var(--cool)) !important}
+
+  /* ── toasts → premium glass with accent rail ─────────────────── */
+  .toast{border-radius:var(--radius-sm); border:1px solid var(--line2);
+    border-left:3px solid var(--accent);
+    background:linear-gradient(180deg, rgba(26,26,40,.94), rgba(20,20,32,.94));
+    box-shadow:var(--shadow); font-weight:600}
+  .toast.ok{border-left-color:var(--teal)} .toast.err{border-left-color:var(--red)}
+
+  /* ── skeleton loading shimmer (premium) ──────────────────────── */
+  .sg-card.skeleton,.skeleton{position:relative; overflow:hidden;
+    background:linear-gradient(180deg, rgba(22,22,34,.6), rgba(16,16,26,.7)) !important;
+    border-style:dashed !important; border-color:var(--line2) !important}
+  .sg-card.skeleton::after,.skeleton::after{content:""; position:absolute; inset:0;
+    background:linear-gradient(100deg, transparent 20%, rgba(255,255,255,.06) 50%, transparent 80%);
+    transform:translateX(-100%); animation:shimmer 1.4s ease-in-out infinite}
+  @keyframes shimmer{to{transform:translateX(100%)}}
+
+  /* ── focusable affordances & links ───────────────────────────── */
+  a:focus-visible,button:focus-visible,.tab:focus-visible{outline:2px solid var(--accent-soft); outline-offset:2px}
+
+  /* ── scrollbar harmonised to the accent ──────────────────────── */
+  *::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--line2),var(--accent-deep));
+    border:3px solid var(--bg2); border-radius:99px}
+  *::-webkit-scrollbar-thumb:hover{background:var(--accent)}
+
+  /* lite mode keeps the new shadows/colours but drops the shimmer anim
+     (covered by the existing body.lite *:not(.spin) rule above). */
+  body.lite .sg-card.skeleton::after, body.lite .skeleton::after{animation:none !important; opacity:0}
 </style>
 </head>
 <body>
