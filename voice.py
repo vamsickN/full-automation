@@ -331,17 +331,19 @@ def _concat_wav(wav_list):
     try:
         out = io.BytesIO()
         writer = None
-        for w in wav_list:
-            with wave.open(io.BytesIO(w), "rb") as rd:
-                frames = rd.readframes(rd.getnframes())
-                if writer is None:
-                    writer = wave.open(out, "wb")
-                    writer.setnchannels(rd.getnchannels())
-                    writer.setsampwidth(rd.getsampwidth())
-                    writer.setframerate(rd.getframerate())
-                writer.writeframes(frames)
-        if writer is not None:
-            writer.close()
+        try:
+            for w in wav_list:
+                with wave.open(io.BytesIO(w), "rb") as rd:
+                    frames = rd.readframes(rd.getnframes())
+                    if writer is None:
+                        writer = wave.open(out, "wb")
+                        writer.setnchannels(rd.getnchannels())
+                        writer.setsampwidth(rd.getsampwidth())
+                        writer.setframerate(rd.getframerate())
+                    writer.writeframes(frames)
+        finally:
+            if writer is not None:
+                writer.close()
         return out.getvalue()
     except Exception:
         return wav_list[0]

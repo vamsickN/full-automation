@@ -3503,7 +3503,7 @@ async function extractFrames(){
     const g=$("#framesGrid"); g.innerHTML="";
     d.frames.forEach((u,i)=>{
       const el=document.createElement("div"); el.className="frame";
-      el.innerHTML=`<img src="${u}"/><div class="tick">✓</div><div class="fno">${pad(i+1)}</div>`;
+      el.innerHTML=`<img src="${_esc(u)}"/><div class="tick">✓</div><div class="fno">${pad(i+1)}</div>`;
       el.onclick=()=>{ el.classList.toggle("sel"); if(el.classList.contains("sel"))selectedFrames.add(u); else selectedFrames.delete(u); $("#selCount").textContent=selectedFrames.size?`(${selectedFrames.size})`:""; };
       g.appendChild(el);
     });
@@ -3536,7 +3536,7 @@ function renderAnchors(){
   const w=$("#anchorsWrap"), s=$("#anchorsStrip");
   if(!STATE.style_frames || !STATE.style_frames.length){ w.style.display="none"; return; }
   w.style.display="block"; s.innerHTML="";
-  STATE.style_frames.forEach(a=>{ const d=document.createElement("div"); d.className="a"; d.innerHTML=`<img src="${a.url}"/>`; s.appendChild(d); });
+  STATE.style_frames.forEach(a=>{ const d=document.createElement("div"); d.className="a"; d.innerHTML=`<img src="${_esc(a.url)}"/>`; s.appendChild(d); });
 }
 
 /* ---------- characters ---------- */
@@ -3602,9 +3602,9 @@ function renderCharacters(){
       : c.source==="variant" ? `<span class="tag up">VARIANT</span>`
       : c.source==="from-photo" ? `<span class="tag up">PHOTO</span>`
       : `<span class="tag">REF</span>`;
-    const poses=(c.poses||[]).length ? `<div class="pose-strip">${c.poses.map(p=>`<a href="${p.url}" target="_blank" title="${escapeHtml(p.label||'')}"><img src="${p.url}" alt="${escapeHtml(p.label||'pose')}"/></a>`).join("")}</div>` : "";
+    const poses=(c.poses||[]).length ? `<div class="pose-strip">${c.poses.map(p=>`<a href="${_esc(p.url)}" target="_blank" title="${escapeHtml(p.label||'')}"><img src="${_esc(p.url)}" alt="${escapeHtml(p.label||'pose')}"/></a>`).join("")}</div>` : "";
     el.innerHTML=`
-      <div class="ph"><img src="${c.sheet_url}" alt="${escapeHtml(c.name)}"/></div>
+      <div class="ph"><img src="${_esc(c.sheet_url)}" alt="${escapeHtml(c.name)}"/></div>
       <div class="meta">
         <div class="cname">${escapeHtml(c.name)}${tag}</div>
         <div class="cdesc">${escapeHtml(c.description||"—")}</div>
@@ -3787,7 +3787,7 @@ function renderBoard(){
       <div class="img">
         ${SELECT_MODE?`<label class="shot-check"><input type="checkbox" ${selectedShots.has(s.id)?"checked":""}></label>`:""}
         <div class="fnum">FRAME ${pad(s.index)}</div>
-        <img src="${s.image_url}" alt="frame ${s.index}"/>
+        <img src="${_esc(s.image_url)}" alt="frame ${s.index}"/>
       </div>
       <div class="body">
         <div class="ptext">${escapeHtml(s.prompt)}</div>
@@ -3798,7 +3798,7 @@ function renderBoard(){
           ${cont}${cast}
         </div>
         <div class="foot">
-          <a class="btn outline sm" href="${s.image_url}" download>Download</a>
+          <a class="btn outline sm" href="${_esc(s.image_url)}" download>Download</a>
           <button class="btn outline sm" onclick="reroll('${s.id}', this)">↻ Re-roll</button>
           <button class="btn outline sm" onclick="openVariants('${s.id}', this)">⊞ Variants</button>
           <button class="btn outline sm" onclick="openInpaint('${s.id}')">🖌 Inpaint</button>
@@ -3861,7 +3861,7 @@ function showVariantPicker(id, urls){
   if(!urls.length){ toast("No variants generated","err"); return; }
   $("#uiModal").classList.add("wide");
   $("#uiModal").innerHTML=`<h3>Pick the best frame</h3><p>${urls.length} fresh variants for this shot — click one to keep it.</p>
-    <div class="var-grid">${urls.map(u=>`<div class="var-card" data-u="${u}"><img src="${u}" alt="variant"/></div>`).join("")}</div>
+    <div class="var-grid">${urls.map(u=>`<div class="var-card" data-u="${_esc(u)}"><img src="${_esc(u)}" alt="variant"/></div>`).join("")}</div>
     <div class="uirow"><button class="btn outline sm" id="uiCancel">Cancel</button></div>`;
   $("#uiModalBg").classList.add("show");
   $("#uiCancel").onclick=()=>_closeUiModal();
@@ -3890,7 +3890,7 @@ function openInpaint(id){
   _INP={cv:null, ctx:null, painting:false, strokes:[], cur:null};
   $("#uiModal").classList.add("wide");
   $("#uiModal").innerHTML=`<h3>🖌 Inpaint — paint the area to change</h3>
-    <div class="inp-wrap"><img id="inpImg" src="${s.image_url}"/><canvas id="inpCv"></canvas></div>
+    <div class="inp-wrap"><img id="inpImg" src="${_esc(s.image_url)}"/><canvas id="inpCv"></canvas></div>
     <div class="opts" style="margin-top:10px; align-items:center">
       <label class="meta-mono" style="display:flex;align-items:center;gap:7px">brush <input type="range" id="inpBrush" min="10" max="140" value="50" style="width:130px"></label>
       <button class="btn outline sm" onclick="inpClear()">Clear mask</button>
@@ -4135,7 +4135,7 @@ function renderYTASources(d){
   const el=$("#ytaSources");
   const chips=[];
   (d.sources||[]).forEach(s=>{
-    const thumb = (s.frames&&s.frames[0]) ? `<img src="${s.frames[0]}"/>` : "";
+    const thumb = (s.frames&&s.frames[0]) ? `<img src="${_esc(s.frames[0])}"/>` : "";
     chips.push(`<div class="yta-src-chip">${thumb}<div class="st"><div>${_esc(s.title||s.url)}</div>${s.channel?`<div class="sc">${_esc(s.channel)}</div>`:""}</div></div>`);
   });
   (d.errors||[]).forEach(e=>{
@@ -4190,7 +4190,7 @@ function renderYTAFrames(d){
   if(!frames.length){ head.style.display="none"; wrap.innerHTML=""; return; }
   head.style.display="flex";
   $("#ytaFramesCount").textContent = `(${frames.length})`;
-  wrap.innerHTML = frames.map((u,i)=>`<div class="frame"><img src="${u}" loading="lazy" alt="reference frame ${i+1}"/><div class="fno">${String(i+1).padStart(3,"0")}</div></div>`).join("");
+  wrap.innerHTML = frames.map((u,i)=>`<div class="frame"><img src="${_esc(u)}" loading="lazy" alt="reference frame ${i+1}"/><div class="fno">${String(i+1).padStart(3,"0")}</div></div>`).join("");
 }
 function showThumbStudio(d){
   $("#ytaThumbHead").style.display="flex";
@@ -4243,11 +4243,11 @@ function renderThumbnails(){
   const ts=(STATE && STATE.thumbnails)||[];
   const html = ts.slice().reverse().map(t=>`
     <div class="thumb-card">
-      <img src="${t.url}" alt="thumbnail: ${_esc(t.title||"")}"/>
+      <img src="${_esc(t.url)}" alt="thumbnail: ${_esc(t.title||"")}"/>
       <div class="thumb-foot">
         <span class="meta-mono" title="${_esc(t.title||"")}">${_esc(t.title||"untitled")}</span>
         <button class="btn outline sm" onclick="openOverlay('${t.url}')">✎ Text</button>
-        <a class="btn outline sm" href="${t.url}" download>⤓</a>
+        <a class="btn outline sm" href="${_esc(t.url)}" download>⤓</a>
       </div>
     </div>`).join("");
   document.querySelectorAll(".thumb-out").forEach(o=>o.innerHTML=html);
@@ -4635,7 +4635,7 @@ function renderEditFrames(){
   strip.innerHTML = "";
   seq.forEach(s=>{
     const d=document.createElement("div"); d.className="fr";
-    d.innerHTML=`<div class="fnum">${pad(s.index||0)}</div><img src="${s.image_url}" alt="frame ${s.index}"/>`;
+    d.innerHTML=`<div class="fnum">${pad(s.index||0)}</div><img src="${_esc(s.image_url)}" alt="frame ${s.index}"/>`;
     strip.appendChild(d);
   });
 }
@@ -4752,13 +4752,13 @@ function renderEditsList(){
     const w = document.createElement("div"); w.className="editvid";
     const ytBtn = CFG.google_configured ? `<button class="btn outline sm" onclick="publishYouTube('${e.id}')" style="color:var(--red)">▶ Publish to YouTube</button>` : "";
     w.innerHTML = `
-      <video controls src="${e.url}"></video>
+      <video controls src="${_esc(e.url)}"></video>
       <div style="display:flex; align-items:center; gap:10px; padding:10px 14px; background:var(--bg2); flex-wrap:wrap">
         <span class="badge">${e.transition}</span>
         <span class="meta-mono">${new Date((e.created||0)*1000).toLocaleString()}</span>
         <span style="flex:1"></span>
         ${ytBtn}
-        <a class="btn outline sm" href="${e.url}" download>Download MP4</a>
+        <a class="btn outline sm" href="${_esc(e.url)}" download>Download MP4</a>
         <button class="btn danger sm" onclick="delEdit('${e.id}')">Remove</button>
       </div>`;
     root.appendChild(w);
@@ -5241,7 +5241,7 @@ function tlRenderTrack(){
     el.style.width=pct+"px";
     el.draggable=true;
     el.dataset.i=i;
-    el.innerHTML=`<span class="tl-idx">#${c.index}</span><img src="${c.url}" alt="frame ${c.index}"/><div class="tl-dur" data-i="${i}">${c.duration.toFixed(1)}s</div>`;
+    el.innerHTML=`<span class="tl-idx">#${c.index}</span><img src="${_esc(c.url)}" alt="frame ${c.index}"/><div class="tl-dur" data-i="${i}">${c.duration.toFixed(1)}s</div>`;
     el.addEventListener("dragstart",e=>{TL_DRAG_IDX=i; e.dataTransfer.effectAllowed="move";});
     el.addEventListener("dragover",e=>{e.preventDefault(); e.dataTransfer.dropEffect="move";});
     el.addEventListener("drop",e=>{
@@ -5301,10 +5301,10 @@ async function tlRender(){
     STATE.edits=(STATE.edits||[]);
     STATE.edits.push(d);
     renderEditsList();
-    $("#tlResult").innerHTML=`<div class="editvid"><video controls src="${d.url}"></video>
+    $("#tlResult").innerHTML=`<div class="editvid"><video controls src="${_esc(d.url)}"></video>
       <div style="padding:10px 14px;background:var(--bg2);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <span class="badge">${d.transition}</span><span style="flex:1"></span>
-        <a class="btn outline sm" href="${d.url}" download>Download MP4</a></div></div>`;
+        <a class="btn outline sm" href="${_esc(d.url)}" download>Download MP4</a></div></div>`;
     toast("Timeline render complete","ok"); confettiBurst();
   }catch(e){ toast(e.message,"err"); }
   finally{ busy(b,false); }
@@ -5579,7 +5579,7 @@ async function runAutopilot(idx=0, fromCache=false){
       const videoErr=d.video_error||(d.steps||[]).find(s=>s.step==="video")?.error||null;
       let html='<div class="ap-result">';
       if(d.video_url){
-        html+=`<div><video controls src="${d.video_url}" style="max-width:340px;border-radius:10px;border:1px solid var(--line)"></video><div style="font-size:12px;color:var(--teal);margin-top:4px">${d.total_duration||0}s · ${framesDone} frames</div></div>`;
+        html+=`<div><video controls src="${_esc(d.video_url)}" style="max-width:340px;border-radius:10px;border:1px solid var(--line)"></video><div style="font-size:12px;color:var(--teal);margin-top:4px">${d.total_duration||0}s · ${framesDone} frames</div></div>`;
       } else {
         // No video — show why and offer to rebuild
         let errHtml='<div style="background:rgba(255,80,80,.08);border:1px solid rgba(255,80,80,.3);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--red);max-width:340px">';
@@ -5591,7 +5591,7 @@ async function runAutopilot(idx=0, fromCache=false){
         errHtml+=`</div></div>`;
         html+=errHtml;
       }
-      if(d.thumbnail_url) html+=`<div><img src="${d.thumbnail_url}" style="max-width:200px;border-radius:8px;border:1px solid var(--line)"/><div style="font-size:12px;color:var(--muted);margin-top:4px">Thumbnail</div></div>`;
+      if(d.thumbnail_url) html+=`<div><img src="${_esc(d.thumbnail_url)}" style="max-width:200px;border-radius:8px;border:1px solid var(--line)"/><div style="font-size:12px;color:var(--muted);margin-top:4px">Thumbnail</div></div>`;
       html+=`<div style="font-size:13px;color:var(--ink)"><strong>${_esc(d.suggestion?.title||'')}</strong><br><span style="color:var(--muted)">${_esc(d.suggestion?.logline||'')}</span></div>`;
       html+='</div>';
       if(framesFailed>0&&!frameErr) html+=`<div style="font-size:12px;color:var(--amber);margin-top:6px">${framesFailed} frame(s) failed to render — check image API key in Settings.</div>`;
@@ -5601,7 +5601,7 @@ async function runAutopilot(idx=0, fromCache=false){
       html+=`<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">`;
       if(d.video_url) html+=`<button class="btn sm" onclick="openReview('${d.video_url}','${(d.total_duration||0)}s · ${framesDone} frames')">🎬 Review &amp; adjust</button>`;
       html+=`<a class="btn glow sm" href="/api/export/package" download>⬇ Download project ZIP</a>`;
-      if(d.video_url) html+=`<a class="btn outline sm" href="${d.video_url}" download>MP4 only</a>`;
+      if(d.video_url) html+=`<a class="btn outline sm" href="${_esc(d.video_url)}" download>MP4 only</a>`;
       html+=`</div>`;
       $("#apResult").innerHTML=html;
       if(d.video_url){
@@ -5676,7 +5676,7 @@ async function apBuildVideo(){
       if(res){
         const vd=res.querySelector("video");
         if(vd){ vd.src=d.video_url; vd.load(); }
-        else res.insertAdjacentHTML("afterbegin",`<div><video controls src="${d.video_url}" style="max-width:340px;border-radius:10px;border:1px solid var(--line)"></video><div style="font-size:12px;color:var(--teal);margin-top:4px">${d.duration||0}s · ${d.frames||0} frames</div></div>`);
+        else res.insertAdjacentHTML("afterbegin",`<div><video controls src="${_esc(d.video_url)}" style="max-width:340px;border-radius:10px;border:1px solid var(--line)"></video><div style="font-size:12px;color:var(--teal);margin-top:4px">${d.duration||0}s · ${d.frames||0} frames</div></div>`);
       }
       toast(`Video built — ${d.duration||0}s · ${d.frames||0} frames`,"ok");
       autoDownloadZip();
@@ -5732,7 +5732,7 @@ function rvRenderFrames(){
   wrap.innerHTML = seq.map((s,i)=>{
     const h=(RV.holds[s.id]!=null?RV.holds[s.id]:2.0);
     return `<div class="rv-fr" draggable="true" data-id="${s.id}">
-      <img src="${s.image_url}" alt="frame ${i+1}"/>
+      <img src="${_esc(s.image_url)}" alt="frame ${i+1}"/>
       <span class="rv-no">${i+1}</span>
       <button class="rv-x" title="Remove this frame" onclick="rvRemove('${s.id}')">✕</button>
       <div class="rv-dur">
@@ -5996,19 +5996,19 @@ function wfRenderTopics(el){
 function wfRenderLatestEdit(el){
   const dl=el.querySelector("#wf-ed-dl"); if(!dl) return;
   const e=(STATE&&STATE.edits||[]).slice(-1)[0];
-  dl.innerHTML = e ? `<a class="wf-tbtn" href="${e.url}" download>⤓ MP4</a><a class="wf-tbtn" href="${e.url}" target="_blank">▶ Open</a>` : "";
+  dl.innerHTML = e ? `<a class="wf-tbtn" href="${_esc(e.url)}" download>⤓ MP4</a><a class="wf-tbtn" href="${_esc(e.url)}" target="_blank">▶ Open</a>` : "";
   wfRenderEdges();
 }
 function wfRenderLatestSync(el){
   const dl=el&&el.querySelector("#wf-sy-dl"); if(!dl) return;
   const e=(STATE&&STATE.edits||[]).slice(-1)[0];
-  dl.innerHTML = e ? `<a class="wf-tbtn" href="${e.url}" download>⤓ MP4</a><a class="wf-tbtn" href="${e.url}" target="_blank">▶ Open</a>` : "";
+  dl.innerHTML = e ? `<a class="wf-tbtn" href="${_esc(e.url)}" download>⤓ MP4</a><a class="wf-tbtn" href="${_esc(e.url)}" target="_blank">▶ Open</a>` : "";
   wfRenderEdges();
 }
 function wfRenderLatestThumb(el){
   const dl=el.querySelector("#wf-tm-dl"); if(!dl) return;
   const t=(STATE&&STATE.thumbnails||[]).slice(-1)[0];
-  dl.innerHTML = t ? `<a class="wf-tbtn" href="${t.url}" download>⤓ PNG</a><a class="wf-tbtn" href="${t.url}" target="_blank">▶ Open</a>` : "";
+  dl.innerHTML = t ? `<a class="wf-tbtn" href="${_esc(t.url)}" download>⤓ PNG</a><a class="wf-tbtn" href="${_esc(t.url)}" target="_blank">▶ Open</a>` : "";
   wfRenderEdges();
 }
 function applySuggestionFields(s){

@@ -97,8 +97,13 @@ def _decrypt(value):
     try:
         return _fernet.decrypt(value[len(_ENC_PREFIX):].encode()).decode()
     except Exception:
-        print("[vault] WARNING: decryption failed — key may have changed", flush=True)
-        return ""
+        # Return the original encrypted value instead of empty string.
+        # This prevents silent data loss on key rotation — the caller gets
+        # the encrypted blob back, which is useless but not destructive.
+        # On next save with the correct key, it will be re-encrypted.
+        print("[vault] WARNING: decryption failed — key may have changed; "
+              "original encrypted value preserved", flush=True)
+        return value
 
 
 def encrypt_vault(vault):

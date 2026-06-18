@@ -97,7 +97,7 @@ def _sign_session(email: str) -> str:
     sig = hmac.new(_SESSION_KEY, payload.encode(), hashlib.sha256).hexdigest()[:32]
     return f"{payload}.{sig}"
 
-def _verify_session(token: str) -> str | None:
+def _verify_session(token: str) -> Optional[str]:
     if not token or "." not in token:
         return None
     payload, sig = token.rsplit(".", 1)
@@ -128,12 +128,19 @@ def _run_capture(args, timeout=600):
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    # Global upload size limit (500MB) — prevents OOM from huge file uploads.
+    _MAX_UPLOAD = 500 * 1024 * 1024  # 500MB
+    if request.method in ("POST", "PUT", "PATCH"):
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _MAX_UPLOAD:
+            return JSONResponse(
+                {"detail": f"Upload too large ({int(cl)//1048576}MB). Max {_MAX_UPLOAD//1048576}MB."},
+                status_code=413)
+
     email = ""
     session = request.cookies.get("cs_session", "")
     if session:
         email = _verify_session(session) or ""
-    if not email:
-        email = request.cookies.get("hacker_access", "")
 
     if config.AUTH_REQUIRED and not email:
         path = request.url.path

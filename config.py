@@ -197,12 +197,6 @@ GEMINI_MODELS = [
     "gemini-pro-latest",
 ]
 
-# OpenAI key — used ONLY by the Audio→Video tab for Whisper transcription
-# (word-level timestamps). Independent of the image/text providers above.
-OPENAI_API_KEY = _get("OPENAI_API_KEY", "")
-OPENAI_BASE_URL = _get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-WHISPER_MODEL = _get("WHISPER_MODEL", "whisper-1")
-
 # --- OpenRouter (alternative image generation via chat completions) ---------
 OPENROUTER_API_KEY = _get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = _get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

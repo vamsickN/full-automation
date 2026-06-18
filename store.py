@@ -144,7 +144,9 @@ def current_project_id():
             idx["current"] = ids[0]
             _write_index(idx)
             return ids[0]
-    return _add_project("My first project")
+        # Create first project INSIDE the lock to prevent duplicate creation
+        # when two concurrent requests both see an empty index.
+        return _add_project("My first project")
 
 
 # --------------------------------------------------------------------------- #
