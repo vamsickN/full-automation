@@ -239,7 +239,12 @@ class ClaudeClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": parts})
         base = self.base_url.rstrip("/")
-        if not base.endswith("/v1"):
+        # Most OpenAI-compatible routers expose /v1/chat/completions. Google's
+        # Gemini OpenAI-compat endpoint already ends in /openai (no /v1), and
+        # some bases are already versioned (/v1, /v1beta/openai). Only append
+        # /v1 when the base has no recognisable OpenAI path suffix.
+        if not (base.endswith("/v1") or base.endswith("/openai")
+                or base.endswith("/v1beta") or "/openai" in base):
             base += "/v1"
         _log(f"chat.completions model={model} "
              f"max_completion_tokens={max_tokens} base={base}")

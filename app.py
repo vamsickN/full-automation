@@ -169,6 +169,9 @@ async def auth_middleware(request: Request, call_next):
         "ninerouter_image_model": user_data.get("ninerouter_image_model", config.NINEROUTER_IMAGE_MODEL),
         "agentrouter_api_key": user_data.get("agentrouter_api_key", getattr(config, "AGENTROUTER_API_KEY", "")),
         "agentrouter_model": user_data.get("agentrouter_model", getattr(config, "AGENTROUTER_MODEL", "claude-sonnet-4-6")),
+        "gemini_api_key": user_data.get("gemini_api_key", getattr(config, "GEMINI_API_KEY", "")),
+        "gemini_model": user_data.get("gemini_model", getattr(config, "GEMINI_MODEL", "gemini-2.5-flash")),
+        "gemini_base_url": user_data.get("gemini_base_url", getattr(config, "GEMINI_BASE_URL", "")),
     }
     return await call_next(request)
 
@@ -246,6 +249,8 @@ def _has_ai_key(s: dict) -> bool:
         return bool(s.get("ninerouter_api_key"))
     if p == "agentrouter":
         return bool(s.get("agentrouter_api_key"))
+    if p == "gemini":
+        return bool(s.get("gemini_api_key"))
     return bool(s.get("claude_api_key"))
 
 
@@ -272,6 +277,14 @@ def _resolve_claude(s: dict, model: str = None):
         return (s.get("agentrouter_api_key", ""),
                 getattr(config, "AGENTROUTER_BASE_URL", "https://agentrouter.org"),
                 model or s.get("agentrouter_model") or getattr(config, "AGENTROUTER_MODEL", "claude-sonnet-4-6"))
+    if p == "gemini":
+        # Google AI Studio via its OpenAI-compatible endpoint. The model name is
+        # NOT "claude", so claude_client routes it through the OpenAI chat path
+        # (_msg_openai) automatically — cheap/free text + vision for scripting,
+        # YouTube analysis and prompting.
+        return (s.get("gemini_api_key", ""),
+                (s.get("gemini_base_url") or config.GEMINI_BASE_URL),
+                model or s.get("gemini_model") or config.GEMINI_MODEL)
     return (s.get("claude_api_key", ""),
             (s.get("claude_base_url") or config.CLAUDE_BASE_URL),
             model or s.get("claude_model"))
@@ -390,6 +403,9 @@ def api_state(request: Request):
             "image_provider": s.get("image_provider", "derouter"),
             "has_anthropic_key": bool(s.get("anthropic_api_key")),
             "claude_provider": s.get("claude_provider", "derouter"),
+            "has_gemini_key": bool(s.get("gemini_api_key")),
+            "gemini_model": s.get("gemini_model", config.GEMINI_MODEL),
+            "gemini_models": config.GEMINI_MODELS,
             "ninerouter_base_url": s.get("ninerouter_base_url", config.NINEROUTER_BASE_URL),
             "ninerouter_model": s.get("ninerouter_model", config.NINEROUTER_MODEL),
             "ninerouter_models": config.NINEROUTER_MODELS,
@@ -482,6 +498,9 @@ class SettingsIn(BaseModel):
     ninerouter_image_model: Optional[str] = None
     agentrouter_api_key: Optional[str] = None
     agentrouter_model: Optional[str] = None
+    gemini_api_key: Optional[str] = None
+    gemini_model: Optional[str] = None
+    gemini_base_url: Optional[str] = None
 
 
 @app.post("/api/settings")
@@ -515,6 +534,9 @@ def api_settings(s: SettingsIn, request: Request):
     if s.ninerouter_image_model: user_settings["ninerouter_image_model"] = s.ninerouter_image_model.strip()
     if s.agentrouter_api_key is not None: user_settings["agentrouter_api_key"] = s.agentrouter_api_key.strip()
     if s.agentrouter_model: user_settings["agentrouter_model"] = s.agentrouter_model.strip()
+    if s.gemini_api_key is not None: user_settings["gemini_api_key"] = s.gemini_api_key.strip()
+    if s.gemini_model: user_settings["gemini_model"] = s.gemini_model.strip()
+    if s.gemini_base_url: user_settings["gemini_base_url"] = s.gemini_base_url.strip().rstrip("/")
 
     vault[email] = user_settings
     save_vault(vault)
@@ -530,6 +552,7 @@ def api_settings(s: SettingsIn, request: Request):
         "has_anthropic_key": bool(user_settings.get("anthropic_api_key")),
         "has_ninerouter_key": bool(user_settings.get("ninerouter_api_key")),
         "has_agentrouter_key": bool(user_settings.get("agentrouter_api_key")),
+        "has_gemini_key": bool(user_settings.get("gemini_api_key")),
         "image_provider": user_settings.get("image_provider", "derouter"),
         "claude_provider": user_settings.get("claude_provider", "derouter"),
     }

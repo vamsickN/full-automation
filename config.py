@@ -185,6 +185,24 @@ OPENAI_MODELS = [
     "gpt-4.1-nano",
 ]
 
+# --- Google Gemini (AI Studio) — cheap/free TEXT + VISION for scripting,
+#     YouTube analysis and prompting. Uses Google's OpenAI-COMPATIBLE endpoint
+#     so it rides the existing OpenAI chat path in claude_client (_msg_openai).
+#     NOTE: free tier covers text+vision; image-gen (Nano Banana / Imagen) and
+#     reliable TTS need billing enabled on the Google account. Image generation
+#     stays on the image provider (derouter) regardless.
+GEMINI_API_KEY = _get("GEMINI_API_KEY", "")
+GEMINI_BASE_URL = _get("GEMINI_BASE_URL",
+                       "https://generativelanguage.googleapis.com/v1beta/openai")
+GEMINI_MODEL = _get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODELS = [
+    "gemini-2.5-flash",         # best value: fast, 1M ctx, vision — default
+    "gemini-2.5-flash-lite",    # cheapest / fastest
+    "gemini-2.5-pro",           # highest quality text
+    "gemini-flash-latest",
+    "gemini-pro-latest",
+]
+
 # --- OpenRouter (alternative image generation via chat completions) ---------
 OPENROUTER_API_KEY = _get("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL = _get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")

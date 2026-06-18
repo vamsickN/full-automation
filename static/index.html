@@ -2245,6 +2245,7 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
           <button class="prov-btn" id="clProvAnthropic" onclick="switchClaudeProvider('anthropic')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--ink)">Anthropic direct</button>
           <button class="prov-btn" id="clProv9router" onclick="switchClaudeProvider('9router')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--ink)">9Router</button>
           <button class="prov-btn" id="clProvAgentrouter" onclick="switchClaudeProvider('agentrouter')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--ink)">AgentRouter</button>
+          <button class="prov-btn" id="clProvGemini" onclick="switchClaudeProvider('gemini')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--ink)">Gemini (cheap)</button>
         </div>
 
         <!-- derouter Claude section -->
@@ -2315,6 +2316,25 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
               Connect AgentRouter
             </button>
             <button class="btn outline sm" id="disconnectAgentrouterBtn" onclick="disconnectAgentrouter()" style="display:none">Disconnect</button>
+          </div>
+        </div>
+
+        <!-- Gemini (Google AI Studio) section -->
+        <div id="clGeminiSection" style="display:none">
+          <div id="clGeminiStatus" class="pill" style="margin-top:8px; width:max-content"><span class="dot"></span><span>not connected</span></div>
+          <p class="sub" style="font-size:11px; color:var(--muted); margin:6px 0 8px">
+            Routes scripting, YouTube analysis &amp; prompting through <a href="https://aistudio.google.com" target="_blank" rel="noopener" style="color:var(--claude-soft)">Google AI Studio</a> (Gemini) via its OpenAI-compatible endpoint — <strong>much cheaper than Claude/derouter, free tier covers text+vision</strong>.
+            Get a key from <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener" style="color:var(--claude-soft)">aistudio.google.com/apikey</a> and paste it below.
+            <br><span style="color:var(--faint)">Image generation is unaffected — it keeps using your image provider. (Gemini image-gen / TTS need Google billing enabled.)</span>
+          </p>
+          <div class="fld"><label class="label">Gemini API key</label><input type="password" id="setGeminiKey" placeholder="your AI Studio key…" onkeydown="if(event.key==='Enter')connectGemini()" /></div>
+          <div class="fld"><label class="label">Model</label><select id="setGeminiModel"></select></div>
+          <div class="fld" style="display:flex; gap:10px; flex-wrap:wrap">
+            <button class="btn claude sm" onclick="connectGemini()">
+              <svg class="spark" width="13" height="13" viewBox="0 0 24 24" style="fill:#2a0f04;filter:none"><path d="M12 1.5c.62 5.2 2.3 6.88 7.5 7.5-5.2.62-6.88 2.3-7.5 7.5-.62-5.2-2.3-6.88-7.5-7.5 5.2-.62 6.88-2.3 7.5-7.5z"/></svg>
+              Connect Gemini
+            </button>
+            <button class="btn outline sm" id="disconnectGeminiBtn" onclick="disconnectGemini()" style="display:none">Disconnect</button>
           </div>
         </div>
 
@@ -3042,7 +3062,7 @@ async function switchClaudeProvider(p){
   const prev=CFG.claude_provider;
   CFG.claude_provider=p;
   renderClaudeProviderUI();
-  const labels={derouter:"derouter proxy",anthropic:"Anthropic direct","9router":"9Router (local)",agentrouter:"AgentRouter"};
+  const labels={derouter:"derouter proxy",anthropic:"Anthropic direct","9router":"9Router (local)",agentrouter:"AgentRouter",gemini:"Gemini (Google AI Studio)"};
   try{
     await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({claude_provider:p})});
     toast("AI provider → "+(labels[p]||p),"ok");
@@ -3059,6 +3079,7 @@ function _deactivateOtherClaudeProviders(activeProvider){
     anthropic: {status:"#clAnthropicStatus",disconnect:"#disconnectAnthropicBtn"},
     "9router": {status:"#cl9routerStatus",  disconnect:"#disconnect9routerBtn"},
     agentrouter:{status:"#clAgentrouterStatus",disconnect:"#disconnectAgentrouterBtn"},
+    gemini:{status:"#clGeminiStatus",disconnect:"#disconnectGeminiBtn"},
   };
   Object.keys(map).forEach(p=>{
     if(p===activeProvider) return;
@@ -3070,7 +3091,7 @@ function _deactivateOtherClaudeProviders(activeProvider){
 }
 function renderClaudeProviderUI(){
   const p=CFG.claude_provider||"derouter";
-  const btnMap={derouter:"clProvDerouter",anthropic:"clProvAnthropic","9router":"clProv9router",agentrouter:"clProvAgentrouter"};
+  const btnMap={derouter:"clProvDerouter",anthropic:"clProvAnthropic","9router":"clProv9router",agentrouter:"clProvAgentrouter",gemini:"clProvGemini"};
   Object.keys(btnMap).forEach(k=>{
     const b=$("#"+btnMap[k]); if(!b) return;
     const on=p===k;
@@ -3078,11 +3099,12 @@ function renderClaudeProviderUI(){
     b.style.color=on?"var(--claude-soft)":"var(--ink)";
     b.style.boxShadow=on?"inset 0 -2px 0 var(--claude-soft)":"none";
   });
-  const ds=$("#clDerouterSection"), as2=$("#clAnthropicSection"), ns=$("#cl9routerSection"), ars=$("#clAgentrouterSection");
+  const ds=$("#clDerouterSection"), as2=$("#clAnthropicSection"), ns=$("#cl9routerSection"), ars=$("#clAgentrouterSection"), gs=$("#clGeminiSection");
   if(ds) ds.style.display=p==="derouter"?"block":"none";
   if(as2) as2.style.display=p==="anthropic"?"block":"none";
   if(ns) ns.style.display=p==="9router"?"block":"none";
   if(ars) ars.style.display=p==="agentrouter"?"block":"none";
+  if(gs) gs.style.display=p==="gemini"?"block":"none";
   _fillAIModelSelects();
   if(p==="anthropic" && CFG.has_anthropic_key){
     const db=$("#disconnectAnthropicBtn"); if(db) db.style.display="inline-flex";
@@ -3096,6 +3118,15 @@ function renderClaudeProviderUI(){
     _fillAgentrouterModels();
     if(CFG.has_agentrouter_key){ const db=$("#disconnectAgentrouterBtn"); if(db) db.style.display="inline-flex"; }
   }
+  if(p==="gemini"){
+    _fillGeminiModels();
+    if(CFG.has_gemini_key){ const db=$("#disconnectGeminiBtn"); if(db) db.style.display="inline-flex"; }
+  }
+}
+function _fillGeminiModels(){
+  const m=CFG.gemini_models||["gemini-2.5-flash"];
+  const d=CFG.gemini_model||m[0];
+  if($("#setGeminiModel")) fillSelect("#setGeminiModel", m, d);
 }
 function _fillAgentrouterModels(){
   const m=CFG.agentrouter_models||["claude-sonnet-4-6"];
@@ -3137,6 +3168,43 @@ async function disconnectAgentrouter(){
     const el=$("#clAgentrouterStatus"); if(el) el.innerHTML=`<span class="dot"></span><span>not connected</span>`;
     const db=$("#disconnectAgentrouterBtn"); if(db) db.style.display="none";
     toast("AgentRouter disconnected","ok");
+  }catch(e){ toast(e.message,"err"); }
+}
+async function connectGemini(){
+  const key=$("#setGeminiKey").value.trim();
+  if(!key && !CFG.has_gemini_key){ toast("Paste your Gemini API key first","err"); $("#setGeminiKey").focus(); return; }
+  const el=$("#clGeminiStatus");
+  if(el) el.innerHTML=`<span class="dot" style="background:var(--amber)"></span><span>connecting…</span>`;
+  try{
+    const body={claude_provider:"gemini",
+                gemini_model:($("#setGeminiModel").value||CFG.gemini_model||"gemini-2.5-flash")};
+    if(key) body.gemini_api_key=key;
+    const d=await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    CFG.has_gemini_key=d.has_gemini_key; CFG.claude_provider=d.claude_provider;
+    CFG.gemini_model=body.gemini_model;
+    const h=await api("/api/health"); const cl=h.claude||{};
+    if(cl.ok){
+      if(el) el.innerHTML=`<span class="dot ok"></span><span>connected · ${cl.configured_model||CFG.gemini_model}</span>`;
+      setClaude(true, cl.configured_model||CFG.gemini_model);
+      _deactivateOtherClaudeProviders("gemini");
+      renderClaudeProviderUI();
+      toast("Gemini connected ✓","ok"); confettiBurst();
+      const db=$("#disconnectGeminiBtn"); if(db) db.style.display="inline-flex";
+    } else {
+      if(el) el.innerHTML=`<span class="dot" style="background:var(--red)"></span><span>key saved but failed: ${_esc(cl.error||"unknown")}</span>`;
+      toast("Couldn't reach Gemini — check your key","err");
+    }
+  }catch(e){ if(el) el.innerHTML=`<span class="dot" style="background:var(--red)"></span><span>${_esc(e.message)}</span>`; toast(e.message,"err"); }
+  finally{ $("#setGeminiKey").value=""; }
+}
+async function disconnectGemini(){
+  try{
+    const d=await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({gemini_api_key:"",claude_provider:"derouter"})});
+    CFG.has_gemini_key=false; CFG.claude_provider="derouter"; CFG.has_claude_key=d.has_claude_key;
+    setClaude(CFG.has_claude_key, CFG.claude_model); renderClaudeProviderUI();
+    const el=$("#clGeminiStatus"); if(el) el.innerHTML=`<span class="dot"></span><span>not connected</span>`;
+    const db=$("#disconnectGeminiBtn"); if(db) db.style.display="none";
+    toast("Gemini disconnected","ok");
   }catch(e){ toast(e.message,"err"); }
 }
 function _fill9routerModels(){
