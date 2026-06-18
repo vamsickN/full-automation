@@ -44,10 +44,6 @@ import editor
 from derouter import ImageClient
 from claude_client import ClaudeClient, extract_json
 
-class AnalyseIn(BaseModel):
-    image_url: str
-    question: str = ""
-
 store.init()
 app = FastAPI(title="Continuity Studio")
 
@@ -2806,11 +2802,33 @@ def _script_voiceover_text(st) -> str:
     return "\n\n".join(p for p in parts if p).strip()
 
 
+def _unwrap_script(sc):
+    """Return the real parsed script dict, unwrapping sc['content'] if the
+    script was stored as a JSON string (autopilot file-path-backed scripts)."""
+    if not sc:
+        return {}
+    _c = sc.get("content")
+    if _c and isinstance(_c, str):
+        try:
+            inner = json.loads(_c)
+            if isinstance(inner, dict) and inner.get("scenes"):
+                return inner
+        except Exception:
+            pass
+    return sc
+
+
 
 def _scene_vo_lines(st):
-    """List of per-scene narration lines (one per numbered scene), in order."""
-    sc = st.get("script") or {}
-    return [(s.get("vo") or "").strip() for s in (sc.get("scenes") or [])]
+    """List of per-scene narration lines (one per numbered scene), in order.
+
+    Unwraps autopilot file-path-backed scripts (scenes stored as a JSON string
+    in sc['content']) and accepts narration field aliases (vo / narration /
+    voice_over), so per-scene timestamp sync works for autopilot scripts too —
+    not just the in-app generator's already-normalized scenes."""
+    sc = _unwrap_script(st.get("script") or {})
+    return [(s.get("vo") or s.get("narration") or s.get("voice_over") or "").strip()
+            for s in (sc.get("scenes") or [])]
 
 
 @app.get("/api/voices")
@@ -2952,7 +2970,6 @@ def _split_script_scenes(script: dict, target_count: int) -> dict:
         base_prompt = (orig.get("prompt") or "").strip()
         heading = (orig.get("heading") or "").strip()
         action = (orig.get("action") or "").strip()
-        full_vo = orig.get("vo") or ""
 
         # Distribute VO words evenly across sub-frames so each carries a
         # proportional speech slice (important for audio-sync hold calculation).
@@ -3399,7 +3416,7 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
         print(f"[video] timestamp-sync: exact holds for {n} frames", flush=True)
     else:
         # Try pre-planned holds set by the autopilot cut planner.
-        sc_list = (st.get("script") or {}).get("scenes") or []
+        sc_list = (_unwrap_script(st.get("script") or {})).get("scenes") or []
         pre_planned = [sc_list[i].get("planned_hold") if i < len(sc_list) else None
                        for i in range(n)]
         if all(v is not None for v in pre_planned):
@@ -5990,7 +6007,8 @@ def api_autopilot(body: AutopilotIn, request: Request):
     # ---- STEP 4: Batch render sequence frames ----
     _check_stop(run_id)
     _ap_prog(run_id, step="frames")
-    scenes = list(script.get("scenes") or [])
+    scenes = list(_unwrap_script(script).get("scenes") or [])
+    scenes = _normalize_scenes(scenes)  # map visual/image_prompt -> prompt
 
     # Hard guarantee: if split / retry still left fewer scenes than expected,
     # extend by repeating the last scene's prompt with progressive moment cues.

@@ -11,7 +11,6 @@ Encrypted values are stored as "enc::<base64-ciphertext>" so they're easy to
 distinguish from plaintext during migration.
 """
 import base64
-import json
 import os
 import threading
 
@@ -98,7 +97,7 @@ def _decrypt(value):
     try:
         return _fernet.decrypt(value[len(_ENC_PREFIX):].encode()).decode()
     except Exception:
-        print(f"[vault] WARNING: decryption failed — key may have changed", flush=True)
+        print("[vault] WARNING: decryption failed — key may have changed", flush=True)
         return ""
 
 

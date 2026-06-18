@@ -135,7 +135,6 @@ class VoiceClient:
         """Split text into chunks under ``limit`` chars at sentence boundaries."""
         if len(text) <= limit:
             return [text]
-        import re
         sentences = re.split(r'(?<=[.!?])\s+', text)
         chunks, current = [], ""
         for s in sentences:

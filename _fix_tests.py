@@ -1,5 +1,5 @@
 """Behavioral tests for the 10 bug fixes. Standalone (no pytest)."""
-import sys, threading, traceback
+import sys, threading
 
 PASS, FAIL = [], []
 def check(name, cond):
@@ -50,7 +50,6 @@ h = holds_from([1.0, None, "x", 3], 4)
 check("edit_holds tolerates null/str", h == [1.0, 0.4, 0.4, 3.0])
 
 # 6. _run_capture returns CompletedProcess and honors timeout
-import subprocess
 cp = app._run_capture([sys.executable, "-c", "print('hi')"], timeout=30)
 check("_run_capture normal returncode 0", cp.returncode == 0)
 cp2 = app._run_capture([sys.executable, "-c", "import time; time.sleep(5)"], timeout=1)

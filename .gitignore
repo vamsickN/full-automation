@@ -23,3 +23,6 @@ _verify*.py
 _verify*.txt
 _verify*.png
 _run.log
+_live_server.log
+__pycache__/
+*.pyc

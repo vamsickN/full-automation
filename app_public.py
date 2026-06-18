@@ -1,10 +1,5 @@
 """Continuity Studio — Public edition (no login gate)."""
-import io
-import json
 import os
-import re
-import time
-import zipfile
 from typing import List, Optional
 
 try:
@@ -14,7 +9,7 @@ except Exception:
     pass
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -23,7 +18,7 @@ import pipeline
 import store
 import editor
 from derouter import ImageClient
-from claude_client import ClaudeClient, extract_json
+from claude_client import ClaudeClient
 
 
 class AnalyseIn(BaseModel):

@@ -17,7 +17,6 @@ import sys
 
 import requests
 
-import config
 import store
 import video as videomod
 
