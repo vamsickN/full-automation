@@ -73,6 +73,29 @@ def _get_local_model(size: str):
     return model
 
 
+def _ensure_wav(audio_path: str) -> str:
+    """Convert any audio file to 16kHz mono WAV via ffmpeg. Returns the WAV
+    path (or the original path if it's already WAV). Deletes the temp WAV on
+    interpreter exit so we don't leak."""
+    ext = os.path.splitext(audio_path)[1].lower()
+    if ext == ".wav":
+        return audio_path
+    import tempfile, atexit
+    fd, wav_path = tempfile.mkstemp(suffix=".wav")
+    os.close(fd)
+    atexit.register(lambda p=wav_path: os.path.exists(p) and os.remove(p))
+    import subprocess
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000",
+         "-c:a", "pcm_s16le", wav_path],
+        capture_output=True, text=True, timeout=120)
+    if proc.returncode != 0 or not os.path.exists(wav_path):
+        raise RuntimeError(
+            f"ffmpeg conversion failed (code {proc.returncode}): "
+            f"{(proc.stderr or '')[-300:]}. Is ffmpeg installed and on PATH?")
+    return wav_path
+
+
 def _transcribe_local(audio_path: str, language: str = None) -> dict:
     if not local_available():
         raise RuntimeError(
@@ -86,9 +109,15 @@ def _transcribe_local(audio_path: str, language: str = None) -> dict:
     except Exception as e:
         raise RuntimeError(f"Could not load local Whisper model '{_LOCAL_MODEL}': {e}")
 
+    # Pre-convert to 16kHz mono WAV so Whisper never chokes on exotic formats.
+    try:
+        wav_path = _ensure_wav(audio_path)
+    except Exception as e:
+        raise RuntimeError(f"Audio format conversion failed: {e}")
+
     try:
         segments_iter, info = model.transcribe(
-            audio_path,
+            wav_path,
             language=language,
             word_timestamps=True,
             vad_filter=True,            # skip long silences -> tighter timing

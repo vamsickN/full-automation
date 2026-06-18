@@ -3134,6 +3134,14 @@ def _holds_from_alignment(tts_lines: list, alignment, total_dur: float):
     """
     if not alignment:
         return None
+    # Guard: total_dur must be a real positive number — prevents division by zero.
+    try:
+        total_dur = float(total_dur)
+    except (TypeError, ValueError):
+        return None
+    if total_dur <= 0.0:
+        return None
+
     chars = alignment.get("characters", [])
     t_starts = alignment.get("character_start_times_seconds", [])
     t_ends = alignment.get("character_end_times_seconds", [])
@@ -3145,6 +3153,9 @@ def _holds_from_alignment(tts_lines: list, alignment, total_dur: float):
         return None
 
     n = len(tts_lines)
+    if n == 0:
+        return None
+
     scene_start_times = []
     search_from = 0
 
@@ -3155,16 +3166,21 @@ def _holds_from_alignment(tts_lines: list, alignment, total_dur: float):
             scene_start_times.append(None)
             continue
         # Try to locate first 20 chars of the line in the alignment text.
-        for needle_len in (20, 12, 8, 5):
-            needle = stripped[:needle_len].strip()
+        # Progressively shorter needles handle Whisper/EL transcription
+        # differences (slight word changes, casing, punctuation).
+        found = False
+        for needle_len in (20, 12, 8, 5, 3):
+            needle = stripped[:needle_len].strip().lower()
             if not needle:
                 continue
-            pos = align_text.find(needle, search_from)
+            # Case-insensitive search handles Whisper lowercase vs original.
+            pos = align_text.lower().find(needle, search_from)
             if pos >= 0:
                 scene_start_times.append(t_starts[pos])
                 search_from = pos + max(1, len(stripped) // 3)
+                found = True
                 break
-        else:
+        if not found:
             # Could not find the line; interpolate from current position.
             scene_start_times.append(t_starts[min(search_from, len(t_starts) - 1)])
 
@@ -6664,14 +6680,28 @@ def api_audio_to_video(body: AudioToVideoIn, request: Request):
         store.save_state(st)
 
     # ---- STEP 3: Claude writes one visual scene per transcript segment ----
-    try:
-        raw = claude.scenes_from_transcript(
-            segments, style_notes=style_notes,
-            master_prompt=store.load_state().get("master_prompt", ""),
-            dynamic=body.dynamic)
-        script = extract_json(raw)
-    except Exception as e:
-        raise HTTPException(500, f"Scene generation failed: {e}")
+    script = None
+    for _attempt in range(3):
+        try:
+            raw = claude.scenes_from_transcript(
+                segments, style_notes=style_notes,
+                master_prompt=store.load_state().get("master_prompt", ""),
+                dynamic=body.dynamic)
+            candidate = extract_json(raw)
+            # Guard: extract_json can return a list (bare array) or None.
+            if isinstance(candidate, list):
+                candidate = {"scenes": candidate, "characters": []}
+            if not isinstance(candidate, dict):
+                raise ValueError(f"Claude returned {type(candidate).__name__}, expected dict")
+            # Must have scenes list.
+            if not (candidate.get("scenes") or []):
+                raise ValueError("Claude returned no scenes")
+            script = candidate
+            break
+        except Exception as e:
+            print(f"[a2v] scene generation attempt {_attempt+1} failed: {e}", flush=True)
+            if _attempt == 2:
+                raise HTTPException(500, f"Scene generation failed after 3 attempts: {e}")
 
     scenes = _normalize_scenes(script.get("scenes") or [])
     # Lock VO to the real transcript verbatim + sanitize image prompts.
