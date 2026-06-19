@@ -79,6 +79,11 @@ def _log(msg):
     print(f"[claude] {msg}", file=sys.stderr, flush=True)
 
 
+def _strip_images(blocks):
+    """Remove image blocks from content — for text-only models."""
+    return [b for b in blocks if b.get("type") != "image"]
+
+
 class ClaudeClient:
     def __init__(self, api_key: str = None, base_url: str = None, model: str = None):
         self.api_key = api_key or config.CLAUDE_API_KEY
@@ -266,6 +271,34 @@ class ClaudeClient:
                     time.sleep(min(20, 2 ** attempt))
                     continue
                 if r.status_code >= 400:
+                    # If the model doesn't support image input (404 with
+                    # "image" in error), cascade to cc/claude-sonnet-4-6
+                    # which supports images via Anthropic protocol.
+                    _err_text = r.text[:400].lower()
+                    if r.status_code == 404 and ("image" in _err_text
+                                                  or "vision" in _err_text):
+                        _log(f"model {model} doesn't support images — "
+                             f"cascading to cc/claude-sonnet-4-6")
+                        text_blocks = _strip_images(content_blocks)
+                        # Try cc/claude-sonnet-4-6 via Anthropic SDK (supports images)
+                        try:
+                            ckwargs = {"model": "cc/claude-sonnet-4-6",
+                                       "max_tokens": max_tokens,
+                                       "messages": [{"role": "user",
+                                                     "content": content_blocks}]}
+                            if system:
+                                ckwargs["system"] = system
+                            with _CLAUDE_SEM:
+                                resp2 = self._sdk.messages.create(**ckwargs)
+                            out2 = []
+                            for block in resp2.content:
+                                btype = getattr(block, "type", None)
+                                if btype == "text":
+                                    out2.append(block.text)
+                            return "\n".join(out2).strip()
+                        except Exception as ce:
+                            _log(f"image cascade to cc/claude-sonnet-4-6 failed: {ce}")
+                            # Fall through to raise the original 404
                     raise RuntimeError(
                         f"chat API error [{r.status_code}]: {r.text[:400]}")
                 # Some routers (e.g. 9Router for mimo models) return SSE
@@ -362,11 +395,15 @@ class ClaudeClient:
                 raise RuntimeError(
                     f"{orig_err} | fallback {fb_model} also failed: {fe}")
 
-        # 429 model cascade: when the primary model is rate-limited, try
-        # progressively lighter models on the same router before giving up.
-        # This prevents "silent placeholder topics" / "keeps loading" when
-        # the user's chosen model is throttled.
+        # 429/404 model cascade: when the primary model is rate-limited or
+        # doesn't support the input type (e.g. images), try progressively
+        # lighter models before giving up. cc/claude-sonnet-4-6 goes first
+        # (supports images via Anthropic); mimo is last-resort (text-only).
         _RATE_LIMIT_CASCADE = ["cc/claude-sonnet-4-6", "mimo/mimo-v2.5-pro"]
+
+        def _strip_images(blocks):
+            """Remove image blocks from content — for text-only models."""
+            return [b for b in blocks if b.get("type") != "image"]
 
         def _try_cascade(orig_err):
             """Try lighter models on the same base_url. Returns result or raises."""
@@ -375,7 +412,7 @@ class ClaudeClient:
                     continue  # skip the model that just failed
                 _log(f"429 cascade — trying {cm}")
                 if "claude" in cm.lower():
-                    # Use the Anthropic SDK with the lighter model
+                    # Use the Anthropic SDK with the lighter model (supports images)
                     try:
                         ckwargs = dict(kwargs)
                         ckwargs["model"] = cm
@@ -396,9 +433,15 @@ class ClaudeClient:
                         _log(f"429 cascade {cm} failed: {ce}")
                         continue
                 else:
-                    # Use the OpenAI path for non-Claude models
+                    # Use the OpenAI path for non-Claude models.
+                    # Strip images — text-only models (e.g. mimo) return 404
+                    # when given image inputs.
                     try:
-                        result = self._msg_openai(content_blocks, system=system,
+                        text_blocks = _strip_images(content_blocks)
+                        if not text_blocks:
+                            _log(f"429 cascade {cm} skipped — no text content after stripping images")
+                            continue
+                        result = self._msg_openai(text_blocks, system=system,
                                                    max_tokens=max_tokens, model=cm)
                         _log(f"429 cascade succeeded with {cm}")
                         return result
