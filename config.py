@@ -53,9 +53,11 @@ NINEROUTER_MODEL = _get("NINEROUTER_MODEL", "cc/claude-sonnet-4-6")
 NINEROUTER_IMAGE_BASE_URL = _get("NINEROUTER_IMAGE_BASE_URL", "http://localhost:20128/v1")
 NINEROUTER_IMAGE_MODEL = _get("NINEROUTER_IMAGE_MODEL", "gpt-image-2")
 # When the local-router Claude route keeps stalling/502ing, the SAME call is
-# rerouted to this model on the router's OpenAI endpoint (the user's ChatGPT
-# account). Empty string disables the fallback.
-CLAUDE_FALLBACK_MODEL = _get("CLAUDE_FALLBACK_MODEL", "cx/gpt-5.5")
+# rerouted to this model on the router's OpenAI endpoint. Default is empty
+# (disabled) — set it ONLY to a model that is NOT rate-limited, otherwise the
+# fallback just trades one failure for another (e.g. cx/gpt-5.5 hitting its
+# usage cap). Pick a non-Claude model on a provider with free quota.
+CLAUDE_FALLBACK_MODEL = _get("CLAUDE_FALLBACK_MODEL", "")
 # Fallback 9Router model ids (provider-prefixed) used only when the live
 # /v1/models fetch fails. The Settings UI loads the real list from your
 # running 9Router, so this just needs sane defaults. cc/ = Claude (OAuth),

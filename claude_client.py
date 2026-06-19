@@ -374,9 +374,11 @@ class ClaudeClient:
                 time.sleep(wait)
             except (APIConnectionError, APITimeoutError) as e:
                 attempt += 1
-                # A timeout already cost up to 240s — don't burn another round
-                # waiting on a stalled route when the GPT fallback is available.
-                if fb_model and attempt >= 1:
+                # Retry the Claude route a couple times before bailing to the
+                # fallback — a single transient stall shouldn't abandon a model
+                # that normally works. Only reroute to the GPT fallback after
+                # the Claude route has genuinely failed repeatedly.
+                if fb_model and attempt >= 3:
                     return _try_fallback(f"Claude route timed out at "
                                          f"{self.base_url}")
                 if attempt > CLAUDE_MAX_RETRIES:
