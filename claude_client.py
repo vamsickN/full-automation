@@ -268,9 +268,29 @@ class ClaudeClient:
                 if r.status_code >= 400:
                     raise RuntimeError(
                         f"chat API error [{r.status_code}]: {r.text[:400]}")
-                data = r.json()
+                # Some routers (e.g. 9Router for mimo models) return SSE
+                # streaming instead of plain JSON even on non-streaming
+                # requests. Handle both: plain JSON and SSE data: lines.
+                raw = r.text.strip()
+                if raw.startswith("data:"):
+                    # SSE streaming response — parse the LAST complete chunk
+                    # (which contains the final content).
+                    import re as _re
+                    chunks = _re.findall(r"^data: (\{.*\})$", raw, _re.MULTILINE)
+                    if chunks:
+                        data = json.loads(chunks[-1])
+                    else:
+                        raise RuntimeError(
+                            f"chat API returned unparseable SSE (model={model}): "
+                            f"{raw[:200]}")
+                else:
+                    data = r.json()
                 msg = (data.get("choices") or [{}])[0].get("message") or {}
                 text = (msg.get("content") or "").strip()
+                # "Thinking" models (e.g. mimo-v2.5-pro) put the actual
+                # response in reasoning_content when content is empty.
+                if not text:
+                    text = (msg.get("reasoning_content") or "").strip()
                 if not text:
                     raise RuntimeError(
                         f"chat API returned no text (model={model})")
