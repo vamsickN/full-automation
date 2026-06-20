@@ -120,11 +120,26 @@ def fetch_transcript(video_id: str, max_chars: int = 6000) -> str:
         return ""
 
     segments = None
-    # New API (1.x): instance .fetch() -> FetchedTranscript (iterable of snippets)
+    # New API (1.x): instance .fetch() -> FetchedTranscript (iterable of snippets).
+    # Try EN first (most reliable), then fall back to ANY available language and
+    # auto-translate to English so non-EN videos still get an analysis transcript.
     try:
         api = API()
-        fetched = api.fetch(video_id, languages=["en", "en-US", "en-GB"])
-        segments = [getattr(s, "text", "") for s in fetched]
+        for langs in (["en", "en-US", "en-GB"], None):  # None => "any language"
+            try:
+                fetched = api.fetch(video_id, languages=langs) if langs else api.fetch(video_id)
+                segments = [getattr(s, "text", "") for s in fetched]
+                if segments:
+                    break
+            except Exception:
+                continue
+        # Last-ditch: ask the API to auto-translate whatever it has into English.
+        if not segments:
+            try:
+                tl = api.fetch(video_id, languages=["en"], translate_to_english=True)
+                segments = [getattr(s, "text", "") for s in tl]
+            except Exception:
+                pass
     except Exception as e1:
         # Old API (<=0.6): static get_transcript -> list[dict]
         try:
@@ -166,10 +181,29 @@ def fetch_metadata(url: str, video_id: str = None) -> dict:
 
 def thumbnail_bytes(video_id: str, thumb_url: str = "") -> bytes:
     """Download a single representative still. Tries the given URL then the
-    standard maxres/hq thumbnail endpoints. Returns b'' on failure."""
-    candidates = [u for u in [thumb_url,
-                  f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
-                  f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"] if u]
+    standard maxres/hq/sd/mq thumbnail endpoints. Returns b'' on failure."""
+    candidates = [u for u in [
+        thumb_url,
+        f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/sddefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
+    ] if u]
+    # Last-ditch: ask YouTube's own oEmbed JSON for a thumbnail URL — works
+    # even when the standard CDN paths 404 (private / partial / processing).
+    try:
+        r = requests.get(
+            f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={video_id}&format=json",
+            timeout=10,
+        )
+        if r.status_code < 400:
+            import json as _json
+            data = _json.loads(r.text or "{}")
+            u = data.get("thumbnail_url")
+            if u:
+                candidates.append(u)
+    except Exception:
+        pass
     for u in candidates:
         try:
             r = requests.get(u, timeout=20)
@@ -199,11 +233,14 @@ def download_frames(url: str, max_frames: int = 12, duration_hint: int = 0):
     tag = store.new_id("yt")
     outtmpl = os.path.join(store.UPLOADS_DIR, f"{tag}.%(ext)s")
     # Prefer a small mp4 to keep the download fast — we only need stills.
+    # Use iOS+Android player clients as fallbacks: the web client gets bot-
+    # blocked from cloud IPs more often than the mobile ones do.
     opts = {
         "quiet": True, "no_warnings": True, "noplaylist": True,
         "socket_timeout": 30, "outtmpl": outtmpl,
         "format": "best[height<=480][ext=mp4]/best[height<=480]/best[ext=mp4]/best",
         "max_filesize": 220 * 1024 * 1024,
+        "extractor_args": {"youtube": {"player_client": ["ios", "android", "web"]}},
     }
     path = None
     try:
