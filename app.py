@@ -165,6 +165,10 @@ async def auth_middleware(request: Request, call_next):
         "mimo_api_key": user_data.get("mimo_api_key", getattr(config, "MIMO_API_KEY", "")),
         "mimo_voice_id": user_data.get("mimo_voice_id", getattr(config, "MIMO_VOICE_ID", "Chloe")),
         "mimo_model": user_data.get("mimo_model", getattr(config, "MIMO_MODEL", "mimo-v2.5-tts")),
+        "deepgram_api_key": user_data.get("deepgram_api_key", getattr(config, "DEEPGRAM_API_KEY", "")),
+        "deepgram_voice_id": user_data.get("deepgram_voice_id", getattr(config, "DEEPGRAM_VOICE_ID", "aura-2-thalia-en")),
+        "deepgram_model": user_data.get("deepgram_model", getattr(config, "DEEPGRAM_MODEL", "aura-2-thalia-en")),
+        "deepgram_encoding": user_data.get("deepgram_encoding", getattr(config, "DEEPGRAM_ENCODING", "mp3")),
         "webhook_url": user_data.get("webhook_url", ""),
         "image_provider": user_data.get("image_provider", "derouter"),
         "anthropic_api_key": user_data.get("anthropic_api_key", getattr(config, "ANTHROPIC_DIRECT_API_KEY", "")),
@@ -344,11 +348,19 @@ def get_claude_client(request: Request = None) -> ClaudeClient:
 def get_voice_client(request: Request, voice_id: str = None):
     import voice
     s = request.state.settings
-    if (s.get("voice_provider") or "elevenlabs") == "mimo":
+    provider = (s.get("voice_provider") or "elevenlabs").lower()
+    if provider == "mimo":
         return voice.MimoVoiceClient(
             api_key=s.get("mimo_api_key", ""),
             model=s.get("mimo_model", ""),
             voice_id=voice_id or s.get("mimo_voice_id", ""),
+        )
+    if provider == "deepgram":
+        return voice.DeepgramVoiceClient(
+            api_key=s.get("deepgram_api_key", ""),
+            model=s.get("deepgram_model", ""),
+            voice_id=voice_id or s.get("deepgram_voice_id", ""),
+            encoding=s.get("deepgram_encoding", "mp3"),
         )
     return voice.VoiceClient(
         api_key=s["elevenlabs_api_key"],
@@ -359,17 +371,24 @@ def get_voice_client(request: Request, voice_id: str = None):
 
 def _has_voice_key(s) -> bool:
     """True if the active voice provider has a key configured."""
-    if (s.get("voice_provider") or "elevenlabs") == "mimo":
+    provider = (s.get("voice_provider") or "elevenlabs").lower()
+    if provider == "mimo":
         return bool(s.get("mimo_api_key"))
+    if provider == "deepgram":
+        return bool(s.get("deepgram_api_key"))
     return bool(s.get("elevenlabs_api_key"))
 
 
 def _voice_default_id(s):
-    """Default voice id for the ACTIVE provider. MiMo voice names (Chloe, Mia…)
-    are NOT valid ElevenLabs ids and vice-versa, so defaulting to the wrong
-    provider's voice makes TTS 400. Always pick the active provider's voice."""
-    if (s.get("voice_provider") or "elevenlabs") == "mimo":
+    """Default voice id for the ACTIVE provider. Each provider has a different
+    voice-id namespace (Eleven uses UUIDs, MiMo uses names like 'Chloe',
+    Deepgram uses 'aura-2-thalia-en'), so defaulting to the wrong provider's
+    voice makes TTS 400. Always pick the active provider's voice."""
+    provider = (s.get("voice_provider") or "elevenlabs").lower()
+    if provider == "mimo":
         return s.get("mimo_voice_id") or "Chloe"
+    if provider == "deepgram":
+        return s.get("deepgram_voice_id") or "aura-2-thalia-en"
     return s.get("elevenlabs_voice_id") or ""
 
 
@@ -405,6 +424,10 @@ def api_state(request: Request):
             "voice_provider": s.get("voice_provider", "elevenlabs"),
             "has_mimo_key": bool(s.get("mimo_api_key")),
             "mimo_voice_id": s.get("mimo_voice_id", "Chloe"),
+            "has_deepgram_key": bool(s.get("deepgram_api_key")),
+            "deepgram_voice_id": s.get("deepgram_voice_id", "aura-2-thalia-en"),
+            "deepgram_model": s.get("deepgram_model", "aura-2-thalia-en"),
+            "deepgram_encoding": s.get("deepgram_encoding", "mp3"),
             "has_voice_key": _has_voice_key(s),
             "webhook_url": s.get("webhook_url", ""),
             "has_webhook": bool(s.get("webhook_url")),
@@ -504,6 +527,10 @@ class SettingsIn(BaseModel):
     mimo_api_key: Optional[str] = None
     mimo_voice_id: Optional[str] = None
     mimo_model: Optional[str] = None
+    deepgram_api_key: Optional[str] = None
+    deepgram_voice_id: Optional[str] = None
+    deepgram_model: Optional[str] = None
+    deepgram_encoding: Optional[str] = None
     webhook_url: Optional[str] = None
     image_provider: Optional[str] = None
     anthropic_api_key: Optional[str] = None
@@ -540,6 +567,10 @@ def api_settings(s: SettingsIn, request: Request):
     if s.mimo_api_key is not None: user_settings["mimo_api_key"] = s.mimo_api_key.strip()
     if s.mimo_voice_id: user_settings["mimo_voice_id"] = s.mimo_voice_id.strip()
     if s.mimo_model: user_settings["mimo_model"] = s.mimo_model.strip()
+    if s.deepgram_api_key is not None: user_settings["deepgram_api_key"] = s.deepgram_api_key.strip()
+    if s.deepgram_voice_id: user_settings["deepgram_voice_id"] = s.deepgram_voice_id.strip()
+    if s.deepgram_model: user_settings["deepgram_model"] = s.deepgram_model.strip()
+    if s.deepgram_encoding: user_settings["deepgram_encoding"] = s.deepgram_encoding.strip().lower()
     if s.webhook_url is not None: user_settings["webhook_url"] = s.webhook_url.strip()
     if s.image_provider: user_settings["image_provider"] = s.image_provider.strip()
     if s.anthropic_api_key is not None: user_settings["anthropic_api_key"] = s.anthropic_api_key.strip()
@@ -565,7 +596,14 @@ def api_settings(s: SettingsIn, request: Request):
         "has_elevenlabs_key": bool(user_settings.get("elevenlabs_api_key")),
         "voice_provider": user_settings.get("voice_provider", "elevenlabs"),
         "has_mimo_key": bool(user_settings.get("mimo_api_key")),
-        "has_voice_key": bool(user_settings.get("mimo_api_key")) if (user_settings.get("voice_provider") == "mimo") else bool(user_settings.get("elevenlabs_api_key")),
+        "has_deepgram_key": bool(user_settings.get("deepgram_api_key")),
+        "has_voice_key": (
+            bool(user_settings.get("mimo_api_key"))
+            if user_settings.get("voice_provider") == "mimo"
+            else bool(user_settings.get("deepgram_api_key"))
+            if user_settings.get("voice_provider") == "deepgram"
+            else bool(user_settings.get("elevenlabs_api_key"))
+        ),
         "has_anthropic_key": bool(user_settings.get("anthropic_api_key")),
         "has_ninerouter_key": bool(user_settings.get("ninerouter_api_key")),
         "has_agentrouter_key": bool(user_settings.get("agentrouter_api_key")),
@@ -2797,6 +2835,61 @@ class VoicePreviewIn(BaseModel):
     text: str = ""
 
 
+class VoiceTestIn(BaseModel):
+    """Ad-hoc 'Connect' test for a specific provider — uses the inline key/voice
+    sent in the body rather than the saved active provider. Lets users verify a
+    just-pasted key BEFORE saving + switching providers."""
+    provider: str
+    api_key: Optional[str] = None     # falls back to the saved key for this provider
+    voice_id: Optional[str] = None
+    encoding: Optional[str] = None    # Deepgram-only output format
+
+
+@app.post("/api/voice/test")
+def api_voice_test(b: VoiceTestIn, request: Request):
+    """Ping ONE specific voice provider with an inline key. Independent of
+    whichever provider is currently set as the active default — so the user can
+    test a new key the moment they paste it, before clicking Save."""
+    import voice as _voice
+    s = request.state.settings
+    provider = (b.provider or "").strip().lower()
+
+    if provider == "elevenlabs":
+        key = (b.api_key or s.get("elevenlabs_api_key") or "").strip()
+        if not key:
+            return {"ok": False, "provider": provider, "detail": "no ElevenLabs key supplied"}
+        client = _voice.VoiceClient(
+            api_key=key,
+            model=s.get("elevenlabs_model") or config.ELEVENLABS_MODEL,
+            voice_id=b.voice_id or s.get("elevenlabs_voice_id") or config.ELEVENLABS_VOICE_ID,
+        )
+    elif provider == "mimo":
+        key = (b.api_key or s.get("mimo_api_key") or "").strip()
+        if not key:
+            return {"ok": False, "provider": provider, "detail": "no MiMo key supplied"}
+        client = _voice.MimoVoiceClient(
+            api_key=key,
+            model=s.get("mimo_model") or config.MIMO_MODEL,
+            voice_id=b.voice_id or s.get("mimo_voice_id") or config.MIMO_VOICE_ID,
+        )
+    elif provider == "deepgram":
+        key = (b.api_key or s.get("deepgram_api_key") or "").strip()
+        if not key:
+            return {"ok": False, "provider": provider, "detail": "no Deepgram key supplied"}
+        client = _voice.DeepgramVoiceClient(
+            api_key=key,
+            model=s.get("deepgram_model") or config.DEEPGRAM_MODEL,
+            voice_id=b.voice_id or s.get("deepgram_voice_id") or config.DEEPGRAM_VOICE_ID,
+            encoding=(b.encoding or s.get("deepgram_encoding") or "mp3"),
+        )
+    else:
+        raise HTTPException(400, f"unknown voice provider: {provider}")
+
+    result = client.ping()
+    result["provider"] = provider
+    return result
+
+
 @app.post("/api/voice/preview")
 def api_voice_preview(b: VoicePreviewIn, request: Request):
     s = request.state.settings
@@ -2987,8 +3080,13 @@ def api_voices(request: Request):
         voices = get_voice_client(request).list_voices()
     except Exception as e:
         raise HTTPException(500, str(e))
-    _provider = s.get("voice_provider") or "elevenlabs"
-    current = s.get("mimo_voice_id") if _provider == "mimo" else s["elevenlabs_voice_id"]
+    _provider = (s.get("voice_provider") or "elevenlabs").lower()
+    if _provider == "mimo":
+        current = s.get("mimo_voice_id")
+    elif _provider == "deepgram":
+        current = s.get("deepgram_voice_id")
+    else:
+        current = s["elevenlabs_voice_id"]
     return {"voices": voices, "current": current, "provider": _provider}
 
 

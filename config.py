@@ -104,6 +104,20 @@ MIMO_VOICE_ID = _get("MIMO_VOICE_ID", "Chloe")
 # Natural-language style instruction sent as the MiMo 'user' message.
 MIMO_STYLE = _get("MIMO_STYLE", "Clear, natural, engaging narration voice.")
 
+# --- Deepgram Aura TTS (premium fast voice alternative) ---------------------
+# Aura / Aura-2 text-to-speech. Get a key at https://console.deepgram.com →
+# API Keys. Returns raw audio bytes (mp3 by default). Generates audio extremely
+# fast (sub-second for short clips); no per-character timestamps (the caller
+# falls back to word-count holds, same as MiMo).
+DEEPGRAM_API_KEY = _get("DEEPGRAM_API_KEY", "")
+DEEPGRAM_BASE_URL = _get("DEEPGRAM_BASE_URL", "https://api.deepgram.com/v1")
+# Deepgram's "model" IS the voice — one string picks both the engine and the
+# speaker (e.g. aura-2-thalia-en = Aura 2 engine, Thalia voice, English).
+DEEPGRAM_MODEL = _get("DEEPGRAM_MODEL", "aura-2-thalia-en")
+DEEPGRAM_VOICE_ID = _get("DEEPGRAM_VOICE_ID", "aura-2-thalia-en")
+# Output container — "mp3" is the safest cross-app default.
+DEEPGRAM_ENCODING = _get("DEEPGRAM_ENCODING", "mp3")
+
 # --- default render settings -----------------------------------------------
 DEFAULT_SIZE = _get("DEFAULT_SIZE", "1536x1024")
 # "medium" by default: ~half the per-image cost of "high", visually near-identical

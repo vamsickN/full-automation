@@ -2470,13 +2470,26 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
         <select id="setVoiceProvider" onchange="_syncVoiceProvider()">
           <option value="elevenlabs">ElevenLabs (premium, paid)</option>
           <option value="mimo">Xiaomi MiMo (free for now)</option>
+          <option value="deepgram">Deepgram Aura (premium, very fast)</option>
         </select>
       </div>
       <div id="setElBlock">
-        <div class="fld"><label class="label">ElevenLabs API key</label><input type="password" id="setElKey" placeholder="ElevenLabs key…" /></div>
+        <div class="fld"><label class="label">ElevenLabs API key</label>
+          <div style="display:flex;gap:6px">
+            <input type="password" id="setElKey" placeholder="ElevenLabs key…" style="flex:1" />
+            <button type="button" class="btn outline sm" onclick="testVoiceProvider('elevenlabs')">Connect</button>
+          </div>
+          <div id="setElStatus" class="hint" style="margin-top:4px;font-size:11px"></div>
+        </div>
       </div>
       <div id="setMimoBlock" style="display:none">
-        <div class="fld"><label class="label">MiMo API key <span class="opt-note">from mimo.mi.com → Console</span></label><input type="password" id="setMimoKey" placeholder="MiMo key…" /></div>
+        <div class="fld"><label class="label">MiMo API key <span class="opt-note">from mimo.mi.com → Console</span></label>
+          <div style="display:flex;gap:6px">
+            <input type="password" id="setMimoKey" placeholder="MiMo key…" style="flex:1" />
+            <button type="button" class="btn outline sm" onclick="testVoiceProvider('mimo')">Connect</button>
+          </div>
+          <div id="setMimoStatus" class="hint" style="margin-top:4px;font-size:11px"></div>
+        </div>
         <div class="fld"><label class="label">MiMo voice</label>
           <select id="setMimoVoice">
             <option value="Chloe">Chloe (EN, female)</option>
@@ -2491,6 +2504,55 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
           </select>
         </div>
         <p class="hint" style="margin:2px 0 0">MiMo is a free ElevenLabs alternative. No per-character timestamps, so frame timing falls back to word-count holds; cut-click SFX use the built-in synth sound.</p>
+      </div>
+      <div id="setDgBlock" style="display:none">
+        <div class="fld"><label class="label">Deepgram API key <span class="opt-note">from console.deepgram.com → API Keys</span></label>
+          <div style="display:flex;gap:6px">
+            <input type="password" id="setDgKey" placeholder="Deepgram key…" style="flex:1" />
+            <button type="button" class="btn outline sm" onclick="testVoiceProvider('deepgram')">Connect</button>
+          </div>
+          <div id="setDgStatus" class="hint" style="margin-top:4px;font-size:11px"></div>
+        </div>
+        <div class="fld"><label class="label">Deepgram voice</label>
+          <select id="setDgVoice">
+            <optgroup label="Aura 2 (newest, recommended)">
+              <option value="aura-2-thalia-en">Thalia — EN female, warm</option>
+              <option value="aura-2-andromeda-en">Andromeda — EN female, calm</option>
+              <option value="aura-2-helena-en">Helena — EN female, bright</option>
+              <option value="aura-2-cora-en">Cora — EN female, smooth</option>
+              <option value="aura-2-luna-en">Luna — EN female, youthful</option>
+              <option value="aura-2-apollo-en">Apollo — EN male, authoritative</option>
+              <option value="aura-2-arcas-en">Arcas — EN male, natural</option>
+              <option value="aura-2-aries-en">Aries — EN male, friendly</option>
+              <option value="aura-2-orion-en">Orion — EN male, grounded</option>
+              <option value="aura-2-orpheus-en">Orpheus — EN male, deep</option>
+              <option value="aura-2-zeus-en">Zeus — EN male, powerful</option>
+            </optgroup>
+            <optgroup label="Aura 1 (original)">
+              <option value="aura-asteria-en">Asteria — EN female</option>
+              <option value="aura-luna-en">Luna — EN female</option>
+              <option value="aura-stella-en">Stella — EN female</option>
+              <option value="aura-athena-en">Athena — EN female</option>
+              <option value="aura-hera-en">Hera — EN female</option>
+              <option value="aura-orion-en">Orion — EN male</option>
+              <option value="aura-arcas-en">Arcas — EN male</option>
+              <option value="aura-perseus-en">Perseus — EN male</option>
+              <option value="aura-angus-en">Angus — EN male, Irish</option>
+              <option value="aura-orpheus-en">Orpheus — EN male</option>
+              <option value="aura-helios-en">Helios — EN male</option>
+              <option value="aura-zeus-en">Zeus — EN male</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="fld"><label class="label">Output format</label>
+          <select id="setDgEncoding">
+            <option value="mp3">MP3 (default, smallest)</option>
+            <option value="wav">WAV (lossless, larger)</option>
+            <option value="opus">Opus / OGG (compact)</option>
+            <option value="flac">FLAC (lossless compressed)</option>
+          </select>
+        </div>
+        <p class="hint" style="margin:2px 0 0">Deepgram Aura is premium (~$0.015/1k chars on Aura 2) but very fast (sub-second for short clips). No per-character timestamps, so frame timing falls back to word-count holds; cut-click SFX use the built-in synth sound.</p>
       </div>
 
       <h4>Appearance</h4>
@@ -5138,9 +5200,12 @@ function openSettings(){
   if($("#set9rBase")) $("#set9rBase").value=CFG.ninerouter_base_url||"http://localhost:20128";
   $("#setElKey").value="";
   if($("#setMimoKey")) $("#setMimoKey").value="";
+  if($("#setDgKey")) $("#setDgKey").value="";
   if($("#setLite")) $("#setLite").checked = document.body.classList.contains('lite');
   if($("#setVoiceProvider")) $("#setVoiceProvider").value = CFG.voice_provider || "elevenlabs";
   if($("#setMimoVoice") && CFG.mimo_voice_id) $("#setMimoVoice").value = CFG.mimo_voice_id;
+  if($("#setDgVoice") && CFG.deepgram_voice_id) $("#setDgVoice").value = CFG.deepgram_voice_id;
+  if($("#setDgEncoding") && CFG.deepgram_encoding) $("#setDgEncoding").value = CFG.deepgram_encoding;
   _syncVoiceProvider();
   if($("#setWebhook")) $("#setWebhook").value = CFG.webhook_url || "";
   if(CFG.multi_image_edit) $("#tgMulti").classList.add("on"); else $("#tgMulti").classList.remove("on");
@@ -5163,8 +5228,80 @@ function setLiteMode(on){
 }
 function _syncVoiceProvider(){
   const p=($("#setVoiceProvider")||{}).value||"elevenlabs";
-  if($("#setElBlock")) $("#setElBlock").style.display = p==="mimo" ? "none" : "";
-  if($("#setMimoBlock")) $("#setMimoBlock").style.display = p==="mimo" ? "" : "none";
+  if($("#setElBlock")) $("#setElBlock").style.display = (p==="elevenlabs") ? "" : "none";
+  if($("#setMimoBlock")) $("#setMimoBlock").style.display = (p==="mimo") ? "" : "none";
+  if($("#setDgBlock")) $("#setDgBlock").style.display = (p==="deepgram") ? "" : "none";
+}
+
+async function testVoiceProvider(provider){
+  // Ping ONE provider with the inline key the user just pasted — does NOT
+  // depend on which provider is currently saved as the default. Output goes
+  // into that provider's #set{El,Mimo,Dg}Status row.
+  // Also flips voice_provider on success, so the Edit/voiceover flow picks up
+  // the just-tested provider without requiring a separate Save click.
+  const statusEl = $("#set" + (provider==="elevenlabs"?"El":provider==="mimo"?"Mimo":"Dg") + "Status");
+  if(!statusEl) return;
+  const keyEl = $("#set" + (provider==="elevenlabs"?"El":provider==="mimo"?"Mimo":"Dg") + "Key");
+  const body = { provider: provider };
+  if(keyEl && keyEl.value.trim()) body.api_key = keyEl.value.trim();
+  if(provider === "mimo" && $("#setMimoVoice")) body.voice_id = $("#setMimoVoice").value;
+  if(provider === "deepgram"){
+    if($("#setDgVoice")) body.voice_id = $("#setDgVoice").value;
+    if($("#setDgEncoding")) body.encoding = $("#setDgEncoding").value;
+  }
+  statusEl.style.color = "";
+  statusEl.textContent = "Pinging…";
+  try{
+    const d = await api("/api/voice/test", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(body),
+    });
+    if(d.ok){
+      statusEl.style.color = "var(--teal,#3fdc8c)";
+      statusEl.textContent = "✔ " + (d.detail || "connected");
+      // Persist the key + flip the active provider so the voiceover workflow
+      // uses this provider on the very next render. Without this the user
+      // would see "Connect ok" but the Edit tab would still synthesize via
+      // whichever provider was active before.
+      try{
+        const vpBody = { voice_provider: provider };
+        if(keyEl && keyEl.value.trim()){
+          if(provider === "elevenlabs") vpBody.elevenlabs_api_key = keyEl.value.trim();
+          else if(provider === "mimo")    vpBody.mimo_api_key        = keyEl.value.trim();
+          else if(provider === "deepgram") vpBody.deepgram_api_key    = keyEl.value.trim();
+        }
+        if(provider === "mimo" && $("#setMimoVoice"))  vpBody.mimo_voice_id     = $("#setMimoVoice").value;
+        if(provider === "deepgram" && $("#setDgVoice")) vpBody.deepgram_voice_id = $("#setDgVoice").value;
+        if(provider === "deepgram" && $("#setDgEncoding")) vpBody.deepgram_encoding = $("#setDgEncoding").value;
+        const sv = await api("/api/settings", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify(vpBody),
+        });
+        CFG.voice_provider = provider;
+        if(sv.has_voice_key !== undefined) CFG.has_voice_key = sv.has_voice_key;
+        if($("#setVoiceProvider")) $("#setVoiceProvider").value = provider;
+        _syncVoiceProvider();
+        VOICES = [];  // force a fresh list from the new provider
+        // surface the switch to the user so the Edit tab dropdowns refresh next render
+        statusEl.textContent += " — active provider switched to " + (
+          provider === "elevenlabs" ? "ElevenLabs" :
+          provider === "mimo"       ? "MiMo"        : "Deepgram");
+        toast("Voice provider → " + (
+          provider === "elevenlabs" ? "ElevenLabs" :
+          provider === "mimo"       ? "MiMo"        : "Deepgram"), "ok");
+      } catch(se){
+        statusEl.textContent += " (key ok, but save failed: " + (se.message||"") + ")";
+      }
+    } else {
+      statusEl.style.color = "var(--red,#ff5a4d)";
+      statusEl.textContent = "✘ " + (d.detail || "connection failed");
+    }
+  } catch(e){
+    statusEl.style.color = "var(--red,#ff5a4d)";
+    statusEl.textContent = "✘ " + (e.message || "request failed");
+  }
 }
 async function loadSettingsUsage(){
   const el=$("#settingsUsage"); if(!el) return;
@@ -5198,6 +5335,9 @@ async function saveSettings(){
   if($("#setVoiceProvider")) body.voice_provider=$("#setVoiceProvider").value;
   const mk=($("#setMimoKey")||{}).value?.trim(); if(mk) body.mimo_api_key=mk;
   if($("#setMimoVoice")) body.mimo_voice_id=$("#setMimoVoice").value;
+  const dgk=($("#setDgKey")||{}).value?.trim(); if(dgk) body.deepgram_api_key=dgk;
+  if($("#setDgVoice")) { body.deepgram_voice_id=$("#setDgVoice").value; body.deepgram_model=$("#setDgVoice").value; }
+  if($("#setDgEncoding")) body.deepgram_encoding=$("#setDgEncoding").value;
   if($("#setWebhook")) body.webhook_url=$("#setWebhook").value.trim();
   try{
     const d=await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
@@ -5209,8 +5349,11 @@ async function saveSettings(){
     CFG.has_elevenlabs_key=d.has_elevenlabs_key;
     if(d.voice_provider) CFG.voice_provider=d.voice_provider;
     if(d.has_mimo_key!==undefined) CFG.has_mimo_key=d.has_mimo_key;
+    if(d.has_deepgram_key!==undefined) CFG.has_deepgram_key=d.has_deepgram_key;
     if(d.has_voice_key!==undefined) CFG.has_voice_key=d.has_voice_key;
     if(body.mimo_voice_id) CFG.mimo_voice_id=body.mimo_voice_id;
+    if(body.deepgram_voice_id) CFG.deepgram_voice_id=body.deepgram_voice_id;
+    if(body.deepgram_encoding) CFG.deepgram_encoding=body.deepgram_encoding;
     VOICES=[];  // provider may have changed — force a fresh voice list
     if(body.webhook_url!==undefined){ CFG.webhook_url=body.webhook_url; CFG.has_webhook=!!body.webhook_url; }
     refreshProviderUI(); renderClaudeProviderUI(); setClaude(d.has_claude_key, CFG.claude_model);
@@ -5272,7 +5415,11 @@ async function testConnections(){
     }
     lines.push("");
     const vo = h.voice || {};
-    lines.push((vo.ok?"✔":"✘")+" ElevenLabs: "+(vo.detail||(vo.ok?"ok":"unknown")));
+    const vp = (CFG.voice_provider || "elevenlabs").toLowerCase();
+    const vpLabel = vp === "mimo" ? "MiMo (Xiaomi)"
+                  : vp === "deepgram" ? "Deepgram Aura"
+                  : "ElevenLabs";
+    lines.push((vo.ok?"✔":"✘")+" "+vpLabel+": "+(vo.detail||(vo.ok?"ok":"unknown")));
     box.textContent = lines.join("\n");
     if(dr.ok && cl.ok) toast("All APIs reachable","ok");
     else toast("Connection test reported problems — see panel","err");

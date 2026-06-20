@@ -476,3 +476,190 @@ class MimoVoiceClient:
         """MiMo has no char-level timing — return (audio, None) so callers use
         word-count holds, exactly like the ElevenLabs fallback path."""
         return self.synthesize(text, voice_id=voice_id), None
+
+
+class DeepgramVoiceClient:
+    """Deepgram Aura / Aura-2 TTS — premium, very fast voice synthesis.
+
+    Exposes the SAME surface as ``VoiceClient`` / ``MimoVoiceClient``
+    (synthesize / synthesize_with_timestamps / list_voices / ping / generate_sfx)
+    so it slots straight into ``get_voice_client()``. Deepgram returns raw audio
+    bytes (mp3 by default) and has no character-level timestamps, so
+    ``synthesize_with_timestamps`` returns ``(audio, None)`` and callers fall
+    back to word-count holds.
+
+    API:  POST {base}/speak?model=<voice>&encoding=<container>
+          headers: Authorization: Token <key>
+          body: {"text": "..."}
+          resp: raw audio bytes (audio/mpeg or audio/wav per encoding)
+
+    The Deepgram \"model\" string IS the voice (e.g. ``aura-2-thalia-en``).
+    There is no separate voice-id parameter.
+    """
+
+    # Built-in Aura + Aura-2 voices. Deepgram doesn't expose a per-account
+    # voice list, so this catalog is shipped with the client.
+    BUILTIN_VOICES = [
+        # --- Aura 2 (newest, recommended) -------------------------------
+        {"id": "aura-2-thalia-en", "name": "Thalia (EN, female, warm)", "category": "aura-2"},
+        {"id": "aura-2-andromeda-en", "name": "Andromeda (EN, female, calm)", "category": "aura-2"},
+        {"id": "aura-2-helena-en", "name": "Helena (EN, female, bright)", "category": "aura-2"},
+        {"id": "aura-2-apollo-en", "name": "Apollo (EN, male, authoritative)", "category": "aura-2"},
+        {"id": "aura-2-arcas-en", "name": "Arcas (EN, male, natural)", "category": "aura-2"},
+        {"id": "aura-2-aries-en", "name": "Aries (EN, male, friendly)", "category": "aura-2"},
+        {"id": "aura-2-cora-en", "name": "Cora (EN, female, smooth)", "category": "aura-2"},
+        {"id": "aura-2-luna-en", "name": "Luna (EN, female, youthful)", "category": "aura-2"},
+        {"id": "aura-2-orion-en", "name": "Orion (EN, male, grounded)", "category": "aura-2"},
+        {"id": "aura-2-orpheus-en", "name": "Orpheus (EN, male, deep)", "category": "aura-2"},
+        {"id": "aura-2-zeus-en", "name": "Zeus (EN, male, powerful)", "category": "aura-2"},
+        # --- Aura 1 (original, still solid) -----------------------------
+        {"id": "aura-asteria-en", "name": "Asteria (EN, female)", "category": "aura"},
+        {"id": "aura-luna-en", "name": "Luna (EN, female)", "category": "aura"},
+        {"id": "aura-stella-en", "name": "Stella (EN, female)", "category": "aura"},
+        {"id": "aura-athena-en", "name": "Athena (EN, female)", "category": "aura"},
+        {"id": "aura-hera-en", "name": "Hera (EN, female)", "category": "aura"},
+        {"id": "aura-orion-en", "name": "Orion (EN, male)", "category": "aura"},
+        {"id": "aura-arcas-en", "name": "Arcas (EN, male)", "category": "aura"},
+        {"id": "aura-perseus-en", "name": "Perseus (EN, male)", "category": "aura"},
+        {"id": "aura-angus-en", "name": "Angus (EN, male, Irish)", "category": "aura"},
+        {"id": "aura-orpheus-en", "name": "Orpheus (EN, male)", "category": "aura"},
+        {"id": "aura-helios-en", "name": "Helios (EN, male)", "category": "aura"},
+        {"id": "aura-zeus-en", "name": "Zeus (EN, male)", "category": "aura"},
+    ]
+
+    def __init__(self, api_key=None, base_url=None, model=None, voice_id=None,
+                 encoding=None, timeout=180):
+        self.api_key = api_key or config.DEEPGRAM_API_KEY
+        self.base_url = (base_url or config.DEEPGRAM_BASE_URL).rstrip("/")
+        # In Deepgram-land, voice_id and model are the same thing. Prefer
+        # whichever the caller supplied; voice_id wins if both are given.
+        self.voice_id = voice_id or model or config.DEEPGRAM_VOICE_ID
+        self.model = self.voice_id  # kept for signature parity
+        self.encoding = (encoding or getattr(config, "DEEPGRAM_ENCODING", "mp3")).lower()
+        self.timeout = timeout
+
+    def _require_key(self):
+        if not self.api_key:
+            raise RuntimeError(
+                "No Deepgram API key set. Paste a Deepgram key in the Settings "
+                "panel or set DEEPGRAM_API_KEY in your .env "
+                "(get one at https://console.deepgram.com)."
+            )
+
+    def _coerce_voice(self, vid):
+        """Deepgram's voice id IS the model. Unknown ids would 400, so if the
+        caller passes an ElevenLabs / MiMo id by mistake, fall back to the
+        configured default (or Thalia)."""
+        valid = {v["id"] for v in self.BUILTIN_VOICES}
+        vid = vid or self.voice_id
+        if vid in valid:
+            return vid
+        return self.voice_id if self.voice_id in valid else "aura-2-thalia-en"
+
+    def ping(self):
+        """Auth check for the Settings 'Test connection' panel — synthesizes a
+        short clip (Aura is sub-second so this is cheap)."""
+        if not self.api_key:
+            return {"ok": False, "detail": "no key"}
+        try:
+            audio = self._synthesize_one("Hi.", self.voice_id)
+            return {"ok": bool(audio),
+                    "detail": "Deepgram TTS reachable" if audio else "no audio returned"}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
+
+    def list_voices(self):
+        """Deepgram's voices are a fixed catalog (no per-account listing)."""
+        return [dict(v) for v in self.BUILTIN_VOICES]
+
+    def generate_sfx(self, text, duration_seconds=None, prompt_influence=0.4):
+        """Deepgram has no sound-effect generation. Raising lets the caller fall
+        back to its ffmpeg-synthesized click/whoosh path."""
+        raise RuntimeError("Deepgram does not support sound-effect generation")
+
+    def _accept_header(self):
+        """Pick the right Accept/Content-Type for the configured encoding."""
+        if self.encoding in ("wav", "linear16"):
+            return "audio/wav"
+        if self.encoding in ("opus", "ogg"):
+            return "audio/ogg"
+        if self.encoding == "flac":
+            return "audio/flac"
+        return "audio/mpeg"  # mp3 default
+
+    def _synthesize_one(self, text, voice_id):
+        """Synthesize a single chunk (must be under the Deepgram per-call cap).
+        Deepgram's /v1/speak accepts a few thousand chars per request; callers
+        chunk longer text via the shared ``VoiceClient._chunk_text`` helper."""
+        self._require_key()
+        voice = self._coerce_voice(voice_id)
+        # Deepgram exposes engine + voice via the model query param; encoding
+        # picks the container the bytes come back in.
+        params = []
+        params.append(f"model={voice}")
+        if self.encoding == "mp3":
+            params.append("encoding=mp3")
+        elif self.encoding in ("wav", "linear16"):
+            params.append("encoding=linear16")
+            params.append("container=wav")
+            params.append("sample_rate=24000")
+        elif self.encoding == "flac":
+            params.append("encoding=flac")
+        elif self.encoding in ("opus", "ogg"):
+            params.append("encoding=opus")
+            params.append("container=ogg")
+        url = f"{self.base_url}/speak?{'&'.join(params)}"
+        body = {"text": (text or "").strip() or " "}
+        r = _post_with_retry(
+            url,
+            headers={
+                "Authorization": f"Token {self.api_key}",
+                "Content-Type": "application/json",
+                "Accept": self._accept_header(),
+            },
+            json=body,
+            timeout=self.timeout,
+            what="Deepgram TTS",
+        )
+        if r.status_code >= 400:
+            # Deepgram error envelopes are JSON: {"err_code":"...","err_msg":"..."}
+            try:
+                err = r.json()
+                detail = err.get("err_msg") or err.get("message") or r.text[:300]
+            except Exception:
+                detail = r.text[:400]
+            raise RuntimeError(f"Deepgram TTS failed [{r.status_code}]: {detail}")
+        if not r.content:
+            raise RuntimeError("Deepgram TTS returned empty audio")
+        return r.content
+
+    def synthesize(self, text, voice_id=None, model=None,
+                   stability=0.5, similarity_boost=0.75, style=0.0):
+        """Text -> spoken audio bytes. Auto-chunks long text and concatenates
+        the resulting MP3 segments (MP3 frames concatenate cleanly; for WAV the
+        client falls back to ``_concat_wav``). The stability/similarity/style
+        params are ElevenLabs-only and ignored here (kept for signature parity).
+        """
+        self._require_key()
+        voice_id = voice_id or self.voice_id
+        speak = (text or "").strip() or " "
+
+        # Deepgram's /v1/speak handles ~2000 chars comfortably per call. Chunk
+        # longer text at sentence boundaries to keep prosody natural.
+        chunks = VoiceClient._chunk_text(speak, limit=1800)
+        if len(chunks) == 1:
+            return self._synthesize_one(chunks[0], voice_id)
+
+        parts = [self._synthesize_one(c, voice_id) for c in chunks]
+        # MP3 frames concatenate fine; WAV needs the wave-aware concat helper.
+        if self.encoding in ("wav", "linear16"):
+            return _concat_wav(parts)
+        return b"".join(p for p in parts if p)
+
+    def synthesize_with_timestamps(self, text, voice_id=None, model=None,
+                                   stability=0.5, similarity_boost=0.75,
+                                   style=0.0):
+        """Deepgram TTS has no char-level timing — return (audio, None) so
+        callers fall back to word-count / Whisper-derived holds, exactly like
+        the MiMo path."""
+        return self.synthesize(text, voice_id=voice_id), None
