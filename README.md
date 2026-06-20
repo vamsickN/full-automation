@@ -108,10 +108,10 @@ Both share the same engine: style-locked frame generation, auto-cast character s
 
 | Role | Providers |
 |------|-----------|
-| **AI / Text** | Claude (Anthropic direct, DeRouter, 9Router, AgentRouter), Gemini |
-| **Image Gen** | GPT-Image-2 via DeRouter, 9Router, direct OpenAI-compatible |
-| **Voice** | ElevenLabs TTS (per-scene or continuous, word timestamps, chunked for long VO) |
-| **Transcription** | Local Whisper (faster-whisper, free, word-level) · ElevenLabs Scribe |
+| **AI / Text** | Claude (direct, DeRouter, 9Router, AgentRouter), Gemini |
+| **Image Gen** | DeRouter (gpt-image-2), 9Router, direct OpenAI-compatible |
+| **Voice** | ElevenLabs, Xiaomi MiMo, Deepgram Aura, Piper (local, free) |
+| **Transcription** | Local Whisper (faster-whisper, free), ElevenLabs Scribe |
 | **Sound** | ElevenLabs SFX (rumble bed + contextual point-SFX), 5 cut-click styles |
 
 ### 10-Tab Studio
@@ -203,8 +203,19 @@ When you first open `http://localhost:8000`, the **Settings** panel opens automa
 | **DeRouter** | gpt-image-2 image gen | $$ pooled credits | `DEROUTER_*` |
 | **9Router** | Local proxy, token savings | $ local | `NINEROUTER_API_KEY` + localhost:20128 |
 | **AgentRouter** | Free Claude tier | Free | `AGENTROUTER_API_KEY` (https://agentrouter.org) |
+| **Piper TTS** | Free local voice-over | Free (local) | None — voice auto-downloaded |
 
 All keys are encrypted at rest in `vault.json` and never leave your machine.
+
+### Optional: Piper TTS (free local voice-over)
+
+```bash
+pip install piper-tts
+# Optional GPU acceleration (5-10x faster, needs NVIDIA GPU):
+pip install onnxruntime-gpu
+```
+
+Then in **Settings → Voice provider → 🆓 Piper TTS** — pick a voice (Amy, Lessac, Kristin, Kusal, Joe, Danny, Ryan, Alba, Jenny), click Connect. The voice model auto-downloads on first use (~60 MB, cached in `data/piper_models/`). No API key, no per-character cost, no internet at synthesis time after the first download. Runs on CPU at ~1× real-time; on CUDA GPU at 5-10× real-time.
 
 ---
 
@@ -475,7 +486,7 @@ Use the full path to the venv Python:
 | **AI / LLM** | Claude (Anthropic SDK), Gemini, OpenAI-compatible proxies |
 | **Image Gen** | GPT-Image-2 via DeRouter / 9Router / direct OpenAI |
 | **Transcription** | Local Whisper (faster-whisper, free) + ElevenLabs Scribe |
-| **Voice** | ElevenLabs TTS (with word-level timestamps) |
+| **Voice** | ElevenLabs TTS (with word-level timestamps) · Piper TTS (local, free, CPU/GPU) · Deepgram Aura · Xiaomi MiMo |
 | **Sound** | ElevenLabs SFX + 5 cut-click styles |
 | **Video** | FFmpeg + FFprobe (fade, crossfade, motion transitions) |
 | **YouTube** | yt-dlp + youtube-transcript-api (multi-language fallback) |

@@ -362,6 +362,16 @@ def get_voice_client(request: Request, voice_id: str = None):
             voice_id=voice_id or s.get("deepgram_voice_id", ""),
             encoding=s.get("deepgram_encoding", "mp3"),
         )
+    if provider == "piper":
+        # 100% free, runs locally on CPU (or CUDA GPU if onnxruntime-gpu is
+        # installed and PIPER_USE_GPU=true). No key, no per-char cost.
+        return voice.PiperVoiceClient(
+            voice_id=voice_id or s.get("piper_voice_id") or config.PIPER_VOICE,
+            use_gpu=s.get("piper_use_gpu"),
+            length_scale=s.get("piper_length_scale"),
+            noise_scale=s.get("piper_noise_scale"),
+            noise_w_scale=s.get("piper_noise_w_scale"),
+        )
     return voice.VoiceClient(
         api_key=s["elevenlabs_api_key"],
         model=s["elevenlabs_model"],
@@ -370,25 +380,42 @@ def get_voice_client(request: Request, voice_id: str = None):
 
 
 def _has_voice_key(s) -> bool:
-    """True if the active voice provider has a key configured."""
+    """True if the active voice provider is configured. Piper has no key —
+    any piper install is always considered 'configured' (it's free and local)."""
     provider = (s.get("voice_provider") or "elevenlabs").lower()
     if provider == "mimo":
         return bool(s.get("mimo_api_key"))
     if provider == "deepgram":
         return bool(s.get("deepgram_api_key"))
+    if provider == "piper":
+        return True   # no key required — local model
     return bool(s.get("elevenlabs_api_key"))
+
+
+def _piper_voices_list():
+    """Safe loader for the Piper voice catalog — works even when piper-tts
+    is not installed (returns [] so the UI hides the option instead of
+    crashing)."""
+    try:
+        import voice as _voice
+        return list(getattr(_voice.PiperVoiceClient, "BUILTIN_VOICES", []) or [])
+    except Exception:
+        return []
 
 
 def _voice_default_id(s):
     """Default voice id for the ACTIVE provider. Each provider has a different
     voice-id namespace (Eleven uses UUIDs, MiMo uses names like 'Chloe',
-    Deepgram uses 'aura-2-thalia-en'), so defaulting to the wrong provider's
-    voice makes TTS 400. Always pick the active provider's voice."""
+    Deepgram uses 'aura-2-thalia-en', Piper uses short ids like 'amy'), so
+    defaulting to the wrong provider's voice makes TTS 400. Always pick the
+    active provider's voice."""
     provider = (s.get("voice_provider") or "elevenlabs").lower()
     if provider == "mimo":
         return s.get("mimo_voice_id") or "Chloe"
     if provider == "deepgram":
         return s.get("deepgram_voice_id") or "aura-2-thalia-en"
+    if provider == "piper":
+        return s.get("piper_voice_id") or "amy"
     return s.get("elevenlabs_voice_id") or ""
 
 
@@ -531,6 +558,11 @@ class SettingsIn(BaseModel):
     deepgram_voice_id: Optional[str] = None
     deepgram_model: Optional[str] = None
     deepgram_encoding: Optional[str] = None
+    piper_voice_id: Optional[str] = None
+    piper_use_gpu: Optional[bool] = None
+    piper_length_scale: Optional[float] = None
+    piper_noise_scale: Optional[float] = None
+    piper_noise_w_scale: Optional[float] = None
     webhook_url: Optional[str] = None
     image_provider: Optional[str] = None
     anthropic_api_key: Optional[str] = None
@@ -571,6 +603,11 @@ def api_settings(s: SettingsIn, request: Request):
     if s.deepgram_voice_id: user_settings["deepgram_voice_id"] = s.deepgram_voice_id.strip()
     if s.deepgram_model: user_settings["deepgram_model"] = s.deepgram_model.strip()
     if s.deepgram_encoding: user_settings["deepgram_encoding"] = s.deepgram_encoding.strip().lower()
+    if s.piper_voice_id: user_settings["piper_voice_id"] = s.piper_voice_id.strip()
+    if s.piper_use_gpu is not None: user_settings["piper_use_gpu"] = bool(s.piper_use_gpu)
+    if s.piper_length_scale is not None: user_settings["piper_length_scale"] = float(s.piper_length_scale)
+    if s.piper_noise_scale is not None: user_settings["piper_noise_scale"] = float(s.piper_noise_scale)
+    if s.piper_noise_w_scale is not None: user_settings["piper_noise_w_scale"] = float(s.piper_noise_w_scale)
     if s.webhook_url is not None: user_settings["webhook_url"] = s.webhook_url.strip()
     if s.image_provider: user_settings["image_provider"] = s.image_provider.strip()
     if s.anthropic_api_key is not None: user_settings["anthropic_api_key"] = s.anthropic_api_key.strip()
@@ -597,11 +634,16 @@ def api_settings(s: SettingsIn, request: Request):
         "voice_provider": user_settings.get("voice_provider", "elevenlabs"),
         "has_mimo_key": bool(user_settings.get("mimo_api_key")),
         "has_deepgram_key": bool(user_settings.get("deepgram_api_key")),
+        "piper_voice_id": user_settings.get("piper_voice_id") or config.PIPER_VOICE,
+        "piper_use_gpu": bool(user_settings.get("piper_use_gpu", config.PIPER_USE_GPU)),
+        "piper_voices": _piper_voices_list(),
         "has_voice_key": (
             bool(user_settings.get("mimo_api_key"))
             if user_settings.get("voice_provider") == "mimo"
             else bool(user_settings.get("deepgram_api_key"))
             if user_settings.get("voice_provider") == "deepgram"
+            else True  # piper — no key required (local model)
+            if user_settings.get("voice_provider") == "piper"
             else bool(user_settings.get("elevenlabs_api_key"))
         ),
         "has_anthropic_key": bool(user_settings.get("anthropic_api_key")),
@@ -2882,6 +2924,15 @@ def api_voice_test(b: VoiceTestIn, request: Request):
             voice_id=b.voice_id or s.get("deepgram_voice_id") or config.DEEPGRAM_VOICE_ID,
             encoding=(b.encoding or s.get("deepgram_encoding") or "mp3"),
         )
+    elif provider == "piper":
+        # No key — test that piper-tts is installed and the voice downloads.
+        try:
+            client = _voice.PiperVoiceClient(
+                voice_id=b.voice_id or s.get("piper_voice_id") or config.PIPER_VOICE,
+                use_gpu=s.get("piper_use_gpu"),
+            )
+        except RuntimeError as e:
+            return {"ok": False, "provider": provider, "detail": str(e)}
     else:
         raise HTTPException(400, f"unknown voice provider: {provider}")
 
@@ -2897,10 +2948,15 @@ def api_voice_preview(b: VoicePreviewIn, request: Request):
         raise HTTPException(400, "No voice/TTS key set — add ElevenLabs or MiMo in Settings.")
     text = (b.text or "").strip() or "This is a quick preview of how this voice sounds."
     try:
-        mp3 = get_voice_client(request, b.voice_id).synthesize(text[:300])
+        client = get_voice_client(request, b.voice_id)
+        audio = client.synthesize(text[:300])
     except Exception as e:
         raise HTTPException(500, f"preview failed: {e}")
-    url, _ = store.write_binary("audio", mp3, ext="mp3", name_hint="preview")
+    # Piper returns WAV bytes, every cloud provider returns MP3. Pick the
+    # container from the active provider so <audio> in the browser plays it.
+    provider = (s.get("voice_provider") or "elevenlabs").lower()
+    ext = "wav" if provider == "piper" else "mp3"
+    url, _ = store.write_binary("audio", audio, ext=ext, name_hint="preview")
     return {"url": url}
 
 

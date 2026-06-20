@@ -9,6 +9,10 @@ python-dotenv>=1.0
 cryptography>=41.0
 yt-dlp>=2024.0
 youtube-transcript-api>=0.6
+# Optional: Piper local TTS (100% free, CPU/GPU, no API key). Models are
+# auto-downloaded on first use into data/piper_models/. Install with
+# `pip install piper-tts`. For GPU acceleration also install `onnxruntime-gpu`.
+piper-tts>=1.4; python_version >= "3.9"
 # Optional: local Whisper for the Audio->Video tab ($0 transcription, word
 # timestamps). Install with `pip install faster-whisper`. The ElevenLabs Scribe
 # engine works without it.

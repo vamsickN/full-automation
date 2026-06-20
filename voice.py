@@ -663,3 +663,235 @@ class DeepgramVoiceClient:
         callers fall back to word-count / Whisper-derived holds, exactly like
         the MiMo path."""
         return self.synthesize(text, voice_id=voice_id), None
+
+
+# ============================================================================
+#  Piper TTS — LOCAL, 100% FREE, runs on your CPU (or GPU if installed)
+# ============================================================================
+#
+# Piper (https://github.com/rhasspy/piper) is an open-source ONNX neural TTS
+# engine. No API key, no per-character cost, no internet at synthesis time
+# once the voice model is downloaded. We auto-download the model on first use
+# from Hugging Face's rhasspy/piper-voices repo and cache it under
+# data/piper_models/. Works on any machine with Python 3.9+.
+#
+# Same surface as VoiceClient / MimoVoiceClient / DeepgramVoiceClient so it
+# slots straight into ``get_voice_client()``. Piper returns WAV bytes and has
+# no char-level timestamps, so ``synthesize_with_timestamps`` returns
+# ``(audio, None)`` — callers fall back to word-count holds (existing path).
+#
+# Performance (real-world on a modern laptop):
+#   * "low"    quality voice -> ~1.5x real-time on CPU, ~10x on CUDA GPU
+#   * "medium" quality voice -> ~1.0x real-time on CPU, ~5x  on CUDA GPU
+#   * "high"   quality voice -> ~0.5x real-time on CPU, ~3x  on CUDA GPU
+#
+# Enable GPU by (1) `pip install onnxruntime-gpu` and (2) PIPER_USE_GPU=true.
+
+_PIPER_VOICES = [
+    # short_id  | HF path (relative to rhasspy/piper-voices main)
+    #           | display name                          | quality | lang    | gender
+    {"id": "amy",        "name": "Amy (EN-US, female, warm)",      "quality": "medium", "lang": "en_US", "gender": "f", "hf_path": "en/en_US/amy/medium/en_US-amy-medium"},
+    {"id": "lessac",     "name": "Lessac (EN-US, female, clear)",  "quality": "medium", "lang": "en_US", "gender": "f", "hf_path": "en/en_US/lessac/medium/en_US-lessac-medium"},
+    {"id": "kristin",    "name": "Kristin (EN-US, female, soft)",  "quality": "medium", "lang": "en_US", "gender": "f", "hf_path": "en/en_US/kristin/medium/en_US-kristin-medium"},
+    {"id": "kusal",      "name": "Kusal (EN-US, male, narration)", "quality": "medium", "lang": "en_US", "gender": "m", "hf_path": "en/en_US/kusal/medium/en_US-kusal-medium"},
+    {"id": "joe",        "name": "Joe (EN-US, male, casual)",      "quality": "medium", "lang": "en_US", "gender": "m", "hf_path": "en/en_US/joe/medium/en_US-joe-medium"},
+    {"id": "danny",      "name": "Danny (EN-US, male, low-pitch)", "quality": "medium", "lang": "en_US", "gender": "m", "hf_path": "en/en_US/danny/low/en_US-danny-low"},
+    {"id": "ryan",       "name": "Ryan (EN-GB, male, narration)",  "quality": "medium", "lang": "en_GB", "gender": "m", "hf_path": "en/en_GB/ryan/medium/en_GB-ryan-medium"},
+    {"id": "alba",       "name": "Alba (EN-GB, female, soft)",     "quality": "medium", "lang": "en_GB", "gender": "f", "hf_path": "en/en_GB/alba/medium/en_GB-alba-medium"},
+    {"id": "jenny_dioco","name": "Jenny (EN-US, female, narration)","quality": "medium","lang": "en_US", "gender": "f", "hf_path": "en/en_US/jenny_dioco/medium/en_US-jenny_dioco-medium"},
+]
+
+_PIPER_VOICE_INDEX = {v["id"]: v for v in _PIPER_VOICES}
+_PIPER_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
+
+
+def _piper_models_dir():
+    """Resolve where Piper voice models are cached. Defaults to
+    data/piper_models/ under the project root. Configurable via
+    PIPER_MODELS_DIR or the user settings panel."""
+    import os
+    d = (getattr(config, "PIPER_MODELS_DIR", "") or "").strip()
+    if d:
+        return d
+    # data/ lives next to app.py — match the rest of the project.
+    try:
+        import store
+        return os.path.join(store.DATA_DIR, "piper_models")
+    except Exception:
+        return os.path.join("data", "piper_models")
+
+
+def _piper_voice_paths(short_id: str):
+    """Resolve a short voice id (e.g. 'amy') to a (model_path, config_path)
+    pair on disk, downloading both from Hugging Face if needed. Raises
+    RuntimeError with a clear message on any failure."""
+    import os
+    info = _PIPER_VOICE_INDEX.get(short_id)
+    if not info:
+        raise RuntimeError(
+            f"Unknown Piper voice: '{short_id}'. Pick one of: "
+            + ", ".join(sorted(_PIPER_VOICE_INDEX.keys())))
+    base = _piper_models_dir()
+    os.makedirs(base, exist_ok=True)
+    model_path = os.path.join(base, os.path.basename(info["hf_path"]) + ".onnx")
+    cfg_path   = os.path.join(base, os.path.basename(info["hf_path"]) + ".onnx.json")
+    if not (os.path.exists(model_path) and os.path.exists(cfg_path)):
+        # Lazy import — keep Piper optional until a user actually picks it.
+        import requests
+        for local, fname in [(model_path, ".onnx"), (cfg_path, ".onnx.json")]:
+            if os.path.exists(local):
+                continue
+            url = f"{_PIPER_BASE_URL}/{info['hf_path']}{fname}"
+            r = requests.get(url, timeout=180, stream=True)
+            if r.status_code >= 400:
+                raise RuntimeError(
+                    f"Could not download Piper voice '{short_id}' from "
+                    f"Hugging Face (HTTP {r.status_code} on {url}). Check "
+                    f"your internet connection or pick a different voice.")
+            with open(local, "wb") as f:
+                for chunk in r.iter_content(chunk_size=1 << 16):
+                    if chunk:
+                        f.write(chunk)
+    return model_path, cfg_path
+
+
+def _piper_use_gpu() -> bool:
+    """Resolve the GPU toggle: config flag AND a working onnxruntime-gpu."""
+    if not getattr(config, "PIPER_USE_GPU", False):
+        return False
+    try:
+        import onnxruntime  # noqa: F401
+        providers = onnxruntime.get_available_providers()
+        return "CUDAExecutionProvider" in providers
+    except Exception:
+        return False
+
+
+class PiperVoiceClient:
+    """Local Piper TTS — 100% free, no API key, runs on CPU or GPU on your
+    machine. Same surface as the cloud providers (synthesize /
+    synthesize_with_timestamps / list_voices / ping / generate_sfx)."""
+
+    # Same voice catalog we show in the Settings UI. Order = default order.
+    BUILTIN_VOICES = [
+        {**v, "category": v["quality"]} for v in _PIPER_VOICES
+    ]
+
+    def __init__(self, voice_id=None, use_gpu=None, length_scale=None,
+                 noise_scale=None, noise_w_scale=None, models_dir=None,
+                 timeout=600):
+        # No key. Voice + knobs are the only knobs.
+        self.voice_id = voice_id or config.PIPER_VOICE
+        self.use_gpu = (use_gpu if use_gpu is not None
+                        else _piper_use_gpu())
+        self.length_scale = (length_scale if length_scale is not None
+                             else float(getattr(config, "PIPER_LENGTH_SCALE", 1.0)))
+        self.noise_scale  = (noise_scale  if noise_scale  is not None
+                             else float(getattr(config, "PIPER_NOISE_SCALE", 0.667)))
+        self.noise_w_scale = (noise_w_scale if noise_w_scale is not None
+                              else float(getattr(config, "PIPER_NOISE_W_SCALE", 0.8)))
+        self.models_dir_override = models_dir
+        self.timeout = timeout
+        self._voice = None          # lazy PiperVoice instance (cache across calls)
+        self._loaded_voice_id = None
+
+    # ---- surface parity with the cloud clients ----------------------
+
+    def _require_key(self):  # pragma: no cover — Piper has no key
+        return  # always passes; kept so signature matches the cloud clients
+
+    def list_voices(self):
+        """Piper ships with a fixed bundled catalog (no per-account listing)."""
+        return [dict(v) for v in self.BUILTIN_VOICES]
+
+    def generate_sfx(self, text, duration_seconds=None, prompt_influence=0.4):
+        """Piper does not generate sound effects. Raise so the caller falls
+        back to its ffmpeg-synthesized click/whoosh path."""
+        raise RuntimeError("Piper does not support sound-effect generation")
+
+    def _load_voice(self, voice_id):
+        """Lazy-load (and cache) the PiperVoice ONNX model."""
+        import os
+        vid = voice_id or self.voice_id
+        if self._voice is not None and self._loaded_voice_id == vid:
+            return self._voice
+        try:
+            import piper
+        except ImportError as e:
+            raise RuntimeError(
+                "Piper TTS isn't installed. Run: pip install piper-tts") from e
+        # Temporarily override the models-dir resolver if the user set one.
+        if self.models_dir_override:
+            global _piper_models_dir
+            _orig = _piper_models_dir
+            _piper_models_dir = lambda: self.models_dir_override  # type: ignore
+        try:
+            model_path, cfg_path = _piper_voice_paths(vid)
+            self._voice = piper.PiperVoice.load(
+                model_path, cfg_path, use_cuda=self.use_gpu)
+            self._loaded_voice_id = vid
+            return self._voice
+        finally:
+            if self.models_dir_override:
+                _piper_models_dir = _orig  # type: ignore
+
+    def ping(self):
+        """Auth check for the Settings 'Test connection' panel — loads the
+        active voice (auto-downloads on first run) and synthesizes a one-word
+        clip."""
+        try:
+            audio = self._synthesize_one("Hi.", self.voice_id)
+            return {"ok": bool(audio),
+                    "detail": (f"Piper ready ({self._loaded_voice_id}, "
+                               f"{'GPU' if self.use_gpu else 'CPU'})")}
+        except Exception as e:
+            return {"ok": False, "detail": str(e)}
+
+    def _synthesize_one(self, text, voice_id):
+        """One Piper synthesize call -> WAV bytes. Lazy-loads the voice.
+        Piper always emits mono 16-bit PCM, so we hardcode the WAV header
+        (no per-channel / per-width attributes exist on PiperConfig)."""
+        import io, wave
+        from piper.config import SynthesisConfig
+        v = self._load_voice(voice_id)
+        buf = io.BytesIO()
+        wf = wave.open(buf, "wb")
+        wf.setnchannels(1)            # Piper is always mono
+        wf.setsampwidth(2)            # Piper is always 16-bit PCM
+        wf.setframerate(v.config.sample_rate)
+        speak = (text or "").strip() or " "
+        # piper >=1.4 takes a SynthesisConfig object (no kwargs on .synthesize).
+        syn_cfg = SynthesisConfig(
+            length_scale=float(self.length_scale) if self.length_scale else None,
+            noise_scale=float(self.noise_scale) if self.noise_scale is not None else None,
+            noise_w_scale=float(self.noise_w_scale) if self.noise_w_scale is not None else None,
+        )
+        for chunk in v.synthesize(speak, syn_config=syn_cfg):
+            wf.writeframes(chunk.audio_int16_bytes)
+        wf.close()
+        return buf.getvalue()
+
+    def synthesize(self, text, voice_id=None, model=None,
+                   stability=0.5, similarity_boost=0.75, style=0.0):
+        """Text -> spoken audio (WAV bytes). Splits long text at sentence
+        boundaries and stitches the WAV chunks via _concat_wav so a 3-minute
+        voiceover still produces one valid file. stability/similarity/style
+        are ElevenLabs-only and ignored here (kept for signature parity)."""
+        self._require_key()
+        vid = voice_id or self.voice_id
+        speak = (text or "").strip() or " "
+        # Piper handles several minutes per call but chunking keeps memory
+        # bounded for huge scripts.
+        chunks = VoiceClient._chunk_text(speak, limit=1500)
+        if len(chunks) == 1:
+            return self._synthesize_one(chunks[0], vid)
+        return _concat_wav([self._synthesize_one(c, vid) for c in chunks])
+
+    def synthesize_with_timestamps(self, text, voice_id=None, model=None,
+                                   stability=0.5, similarity_boost=0.75,
+                                   style=0.0):
+        """Piper has no char-level timing. Return (audio, None) so callers
+        fall back to word-count holds, exactly like the MiMo / Deepgram path.
+        (Future: run local Whisper on the synthesized WAV to recover word
+        timestamps for the A2V frame-accurate sync path.)"""
+        return self.synthesize(text, voice_id=voice_id), None

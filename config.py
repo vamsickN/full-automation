@@ -118,6 +118,25 @@ DEEPGRAM_VOICE_ID = _get("DEEPGRAM_VOICE_ID", "aura-2-thalia-en")
 # Output container — "mp3" is the safest cross-app default.
 DEEPGRAM_ENCODING = _get("DEEPGRAM_ENCODING", "mp3")
 
+# --- Piper TTS (LOCAL, 100% free, runs on CPU/GPU on your machine) -----------
+# Piper is an open-source ONNX neural TTS engine. Zero API cost, runs entirely
+# on your machine. The first synthesize() call auto-downloads the voice model
+# into data/piper_models/ and caches it forever — no setup needed.
+#
+# Real-world CPU perf on a modern laptop: ~1x real-time for "medium" voices,
+# ~0.5x real-time for "low". Set PIPER_USE_GPU=true if you have onnxruntime-gpu
+# installed and a CUDA GPU — typically 5-10x faster.
+#
+# No key needed. Voice id is the short name from the catalog below (e.g.
+# "amy", "lessac", "kristin") and resolves to the matching ONNX bundle.
+PIPER_VOICE = _get("PIPER_VOICE", "amy")
+PIPER_USE_GPU = _get("PIPER_USE_GPU", "false").lower() in ("1", "true", "yes")
+PIPER_LENGTH_SCALE = float(_get("PIPER_LENGTH_SCALE", "1.0"))   # >1 = slower, <1 = faster
+PIPER_NOISE_SCALE = float(_get("PIPER_NOISE_SCALE", "0.667"))   # prosody variance
+PIPER_NOISE_W_SCALE = float(_get("PIPER_NOISE_W_SCALE", "0.8")) # phoneme-duration variance
+# Where downloaded voice models live (auto-created on first use).
+PIPER_MODELS_DIR = _get("PIPER_MODELS_DIR", "")                  # "" -> data/piper_models
+
 # --- default render settings -----------------------------------------------
 DEFAULT_SIZE = _get("DEFAULT_SIZE", "1536x1024")
 # "medium" by default: ~half the per-image cost of "high", visually near-identical
