@@ -136,6 +136,13 @@ PIPER_NOISE_SCALE = float(_get("PIPER_NOISE_SCALE", "0.667"))   # prosody varian
 PIPER_NOISE_W_SCALE = float(_get("PIPER_NOISE_W_SCALE", "0.8")) # phoneme-duration variance
 # Where downloaded voice models live (auto-created on first use).
 PIPER_MODELS_DIR = _get("PIPER_MODELS_DIR", "")                  # "" -> data/piper_models
+# Recover word/char timestamps from the synthesized audio by running local
+# Whisper on it. Yields frame-accurate A/V sync identical to ElevenLabs at
+# $0 cost (uses faster-whisper if installed). Disable on slow machines
+# where synthesis speed matters more than cut precision.
+PIPER_USE_WHISPER_FOR_TIMING = _get("PIPER_USE_WHISPER_FOR_TIMING", "true").lower() in (
+    "1", "true", "yes",
+)
 
 # --- default render settings -----------------------------------------------
 DEFAULT_SIZE = _get("DEFAULT_SIZE", "1536x1024")

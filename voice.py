@@ -704,6 +704,11 @@ _PIPER_VOICES = [
 _PIPER_VOICE_INDEX = {v["id"]: v for v in _PIPER_VOICES}
 _PIPER_BASE_URL = "https://huggingface.co/rhasspy/piper-voices/resolve/main"
 
+# Per-process alignment cache. Keyed by (script_text, voice_id) so repeated
+# lines in a script only pay the Whisper-recovery cost once. A session-end
+# invalidation would be overkill — these are derived purely from inputs.
+_PIPER_ALIGNMENT_CACHE = {}
+
 
 def _piper_models_dir():
     """Resolve where Piper voice models are cached. Defaults to
@@ -887,11 +892,72 @@ class PiperVoiceClient:
             return self._synthesize_one(chunks[0], vid)
         return _concat_wav([self._synthesize_one(c, vid) for c in chunks])
 
+    def _recover_alignment_with_whisper(self, audio_bytes, original_text):
+        """Piper itself emits no per-char timestamps, but we can recover them
+        for free by transcribing the synthesized audio with the same local
+        Whisper the Audio->Video tab already uses. Returns a dict in the
+        exact ``{characters, character_start_times_seconds,
+        character_end_times_seconds}`` shape that ``_holds_from_alignment``
+        consumes — so the rest of the pipeline (Edit tab voiceover,
+        multi-voice auto-flow, workflow autopilot) gets frame-accurate
+        sync identical to the ElevenLabs path, at $0 and $0 API calls.
+
+        Returns ``None`` when Whisper isn't installed or transcribes nothing
+        — callers fall back to word-count holds (the old Piper behaviour).
+        Result is cached per (text, voice) so a script with repeated lines
+        only pays the Whisper cost once.
+        """
+        if not audio_bytes or len(audio_bytes) < 1024:
+            return None
+        vid = self._loaded_voice_id or self.voice_id
+        cache_key = (original_text, vid)
+        if cache_key in _PIPER_ALIGNMENT_CACHE:
+            return _PIPER_ALIGNMENT_CACHE[cache_key]
+        try:
+            import transcribe  # local module; lazy so Piper alone still works
+        except Exception:
+            return None
+        # Cheap toggle: skip Whisper recovery if the user opted out via env
+        # (e.g. on slow machines where synthesis speed matters more than
+        # frame-accurate cuts).
+        if str(getattr(config, "PIPER_USE_WHISPER_FOR_TIMING", "true")).lower() \
+                in ("0", "false", "no"):
+            return None
+        try:
+            import tempfile, os, atexit
+            fd, tmp = tempfile.mkstemp(suffix=".wav")
+            os.close(fd)
+            with open(tmp, "wb") as f:
+                f.write(audio_bytes)
+            atexit.register(lambda p=tmp: os.path.exists(p) and os.remove(p))
+            tr = transcribe.transcribe_audio(tmp)
+        except Exception:
+            return None
+        words = (tr or {}).get("words") or []
+        if not words:
+            return None
+        try:
+            alignment = transcribe.words_to_char_alignment(words)
+        except Exception:
+            return None
+        if alignment and alignment.get("characters"):
+            _PIPER_ALIGNMENT_CACHE[cache_key] = alignment
+        return alignment
+
     def synthesize_with_timestamps(self, text, voice_id=None, model=None,
                                    stability=0.5, similarity_boost=0.75,
                                    style=0.0):
-        """Piper has no char-level timing. Return (audio, None) so callers
-        fall back to word-count holds, exactly like the MiMo / Deepgram path.
-        (Future: run local Whisper on the synthesized WAV to recover word
-        timestamps for the A2V frame-accurate sync path.)"""
-        return self.synthesize(text, voice_id=voice_id), None
+        """Returns ``(wav_bytes, alignment_or_None)`` in the SAME shape the
+        ElevenLabs / MiMo / Deepgram clients use. Piper itself emits no
+        timestamps — but we synthesize the audio, then transcribe it with
+        local Whisper to recover word-level timestamps that get expanded
+        into the ElevenLabs char-alignment shape. Frame-accurate sync on
+        the Edit tab voiceover, the multi-voice auto-flow, AND the YouTube
+        autopilot workflow — all for free, no API calls.
+
+        Set ``PIPER_USE_WHISPER_FOR_TIMING=false`` in ``.env`` to skip the
+        Whisper pass and fall back to word-count holds (faster synthesis,
+        looser sync)."""
+        audio = self.synthesize(text, voice_id=voice_id)
+        alignment = self._recover_alignment_with_whisper(audio, text or "")
+        return audio, alignment
