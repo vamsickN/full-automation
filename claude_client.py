@@ -712,7 +712,11 @@ class ClaudeClient:
             f"- Each scene 'vo' should be approximately {words_per_scene} words "
             f"({pacing_seconds:g}s of speech at natural pace). "
             "Exception: the first 3-5 hook scenes may use shorter 4-8 word bursts.\n"
-            f"- The total narration must read aloud in ~{total_duration:.0f} seconds.\n"
+            f"- The total narration must read aloud in ~{total_duration:.0f} "
+            f"seconds. At ~2.5 words/second that is roughly "
+            f"{max(1, round(total_duration * 2.5))} words of voiceover total — "
+            "write enough real narration to fill the full duration; do NOT come "
+            "in short. Spread substance evenly; never pad with filler.\n"
             + char_rule + char_sheet_rule +
             '- Each scene "vo" is the slice of narration spoken while that image is '
             'on screen; concatenated in order they equal the full "voiceover".\n'
@@ -729,12 +733,23 @@ class ClaudeClient:
             "scroll-stopping opening — shocking question, wild claim, or visceral "
             "image. Short punchy VO (4-8 words). After the hook, settle into "
             f"normal ~{words_per_scene}-word VO lines per scene.\n"
-            "- STYLE BAN: NEVER write doodle, hand-drawn, hand-sketched, "
-            "whiteboard, marker-sketch, pencil-sketch, crayon, scribble, or any "
-            "hand-crafted art style in any scene prompt or character sheet_prompt. "
-            "If the STYLE NOTES contain any of these, IGNORE them and use "
-            "stick man / stick figure style (clean line-art humans, round heads, "
-            "minimal detail) instead."
+            "- STYLE FIDELITY: every scene 'prompt' and character 'sheet_prompt' "
+            "MUST match the art style described in the STYLE NOTES / STYLE BIBLE "
+            "below (rendering technique, palette, line work, level of detail). "
+            "Do NOT substitute a generic or different style. If STYLE NOTES "
+            "describe a hand-drawn / 2D / cel / flat / painterly / 3D look, "
+            "reproduce THAT exact look. Reference-video style is the source of "
+            "truth — never override it with your own default.\n"
+            "- STORY OVER FILLER: this must read like a real story with a clear "
+            "arc — setup, rising tension, turn, payoff — not a slideshow of a "
+            "character standing or walking. Every scene advances the narrative "
+            "and shows a NEW, specific beat (an action, a reveal, a reaction, a "
+            "consequence). Never write 'character stands/walks/looks around' as "
+            "the whole beat.\n"
+            "- RICH BACKGROUNDS: every scene 'prompt' must specify a detailed, "
+            "purposeful environment that fits the story moment (specific place, "
+            "props, depth, lighting, atmosphere) — never a plain empty or blank "
+            "background unless the story explicitly calls for void/negative space."
         )
         if pacing_seconds < 2.0:
             system += (
@@ -751,21 +766,27 @@ class ClaudeClient:
         if dynamic:
             system += (
                 "\n\nDYNAMIC / HIGH-RETENTION MODE (avoid a static slideshow):\n"
-                "- Every scene image \"prompt\" MUST show the MAIN CHARACTER actively "
-                "REACTING to that exact beat — pick the fitting one: scared, confused, "
-                "coughing, choking, sweating, running, shielding their face, stumbling/"
-                "falling back from heat, bracing for impact, looking up at the sky, "
-                "pointing, jaw-dropped. Never just standing and watching.\n"
-                "- VARY THE BACKGROUND every scene and ESCALATE the danger over time "
-                "(calm/confused -> toxic sky -> extreme heat -> lava oceans -> meteor "
-                "storm -> no oxygen/black cracked ground -> payoff). Pull from: lava "
-                "ocean, smoky toxic sky, meteor storm, cracked black ground, volcano "
-                "silhouettes, burning horizon, ash clouds, glowing molten surface.\n"
-                "- Add a CAMERA/COMPOSITION cue to each prompt (extreme close-up on the "
-                "face, low dramatic angle, wide establishing, over-the-shoulder, dutch "
-                "tilt) so consecutive frames feel cut, not repeated.\n"
-                "- Keep the SAME simple art style the whole way through.\n"
-                "- The first scene must be a strong HOOK and the last a punchy PAYOFF.\n"
+                "- Every scene image \"prompt\" MUST show the main subject ACTIVELY "
+                "doing or reacting to that exact story beat — the specific emotion "
+                "or action the moment calls for (shock, fear, joy, struggle, "
+                "discovery, effort, triumph, defeat). Never just standing, "
+                "walking, or passively watching.\n"
+                "- ESCALATE across the video: each act should raise the stakes, "
+                "tension or scale over the one before it so the viewer keeps "
+                "watching to see what happens next. Build toward a clear payoff.\n"
+                "- VARY THE ENVIRONMENT scene to scene (new locations, props, "
+                "depth, lighting) so the world feels alive and the story moves — "
+                "but keep it all consistent with the established setting + art "
+                "style. Choose environments that fit THIS story, not a fixed "
+                "template.\n"
+                "- Add a CAMERA/COMPOSITION cue to each prompt (extreme close-up "
+                "on the face, low dramatic angle, wide establishing, "
+                "over-the-shoulder, dutch tilt) so consecutive frames feel cut, "
+                "not repeated.\n"
+                "- Keep the SAME art style (from the STYLE NOTES) the whole way "
+                "through.\n"
+                "- The first scene must be a strong HOOK and the last a punchy "
+                "PAYOFF.\n"
             )
         if dialogue:
             system += (
@@ -904,10 +925,13 @@ class ClaudeClient:
             "is 0, characters is an empty list.\n"
             "- Keep pacing_seconds, total_duration and scene_count internally "
             "consistent (scene_count ≈ total_duration / pacing_seconds).\n"
-            "- STYLE BAN: NEVER suggest doodle, hand-drawn, hand-sketched, "
-            "whiteboard, marker-sketch, pencil-sketch, crayon, or scribble in "
-            "image_prompt_style. Use stick man / stick figure style instead if "
-            "the reference uses any hand-crafted art style."
+            "- STYLE FIDELITY: image_prompt_style MUST faithfully describe the "
+            "ACTUAL art style of the reference video — its real rendering "
+            "technique, palette, line quality and level of detail (e.g. flat 2D "
+            "vector, cel-shaded anime, hand-drawn cartoon, 3D render, painterly, "
+            "pixel, claymation, stick-figure, whatever it genuinely is). Never "
+            "substitute a different or generic style; describe what you actually "
+            "see."
         )
         bits = []
         if source_title:
@@ -1005,10 +1029,13 @@ class ClaudeClient:
             "is 0, characters is an empty list.\n"
             "- Keep pacing_seconds, total_duration and scene_count internally "
             "consistent (scene_count ≈ total_duration / pacing_seconds).\n"
-            "- STYLE BAN: NEVER suggest doodle, hand-drawn, hand-sketched, "
-            "whiteboard, marker-sketch, pencil-sketch, crayon, or scribble in "
-            "image_prompt_style. Use stick man / stick figure style instead if "
-            "the reference uses any hand-crafted art style."
+            "- STYLE FIDELITY: image_prompt_style MUST faithfully describe the "
+            "ACTUAL art style of the reference video — its real rendering "
+            "technique, palette, line quality and level of detail (e.g. flat 2D "
+            "vector, cel-shaded anime, hand-drawn cartoon, 3D render, painterly, "
+            "pixel, claymation, stick-figure, whatever it genuinely is). Never "
+            "substitute a different or generic style; describe what you actually "
+            "see."
         )
         bits = [f"You are analysing {len(sources)} reference video(s)."]
         for i, src in enumerate(sources, 1):
@@ -1196,7 +1223,10 @@ class ClaudeClient:
             "- Every 'prompt' is a DIFFERENT visual moment: vary location, character "
             "pose, camera angle (close-up / wide / low / high / reaction).\n"
             f"{style_prefix}"
-            "- STYLE BAN: no doodle, hand-drawn, whiteboard, scribble.\n"
+            "- STYLE FIDELITY: match the exact art style of the existing scenes "
+            "and STYLE NOTES — never switch to a different or generic style.\n"
+            "- Each scene must advance the STORY (a new beat / reveal / reaction) "
+            "in a detailed environment — not a character merely standing/walking.\n"
         )
         bits = []
         if existing_scenes:
@@ -1274,7 +1304,8 @@ class ClaudeClient:
             "2-3 max). Every named recurring character MUST have a rich sheet_prompt "
             "describing their canonical look in the target art style. Name them in the "
             "scene prompts so their sheet can be auto-attached.\n"
-            "- STYLE BAN: never write doodle, whiteboard, scribble, pencil-sketch.\n"
+            "- STYLE FIDELITY: describe everything in the reference video's exact "
+            "art style; never switch to a different or generic style.\n"
         )
         bits = [f"Transcript segments ({n} total) — write one visual scene each:\n{seg_lines}"]
         if style_notes.strip():

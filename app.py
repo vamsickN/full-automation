@@ -3583,10 +3583,16 @@ _STICK_REPLACEMENT = "stick man / stick figure style"
 
 
 def _sanitize_prompt(text: str) -> str:
-    """Replace any doodle / hand-drawn style keywords with stick-man style."""
-    if not text:
-        return text
-    return _DOODLE_RE.sub(_STICK_REPLACEMENT, text)
+    """Pass prompts through unchanged.
+
+    Historically this rewrote any hand-drawn / doodle / cartoon style keyword to
+    a fixed 'stick man / stick figure style', which silently DESTROYED the
+    uploaded reference video's art style on every scene + character prompt (the
+    #1 reason generated images never matched the source). Style fidelity is now
+    enforced positively in the prompts, so this is a no-op — the analysed style
+    is preserved verbatim. Kept as a function so existing call sites still work.
+    """
+    return text or ""
 
 
 _CAM_CUES = [
@@ -4037,7 +4043,8 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
                       motion=False, use_music=False, name_hint="flow",
                       sound_design=False, smart_edit=True,
                       cut_clicks=False, cut_click_volume=0.30,
-                      cut_click_style="click", manual_holds=None):
+                      cut_click_style="click", manual_holds=None,
+                      target_seconds=None):
     """Shared engine for the natural-flow video. Returns
     (edit_rec, video_url, total_seconds, scene_map). Mutates + saves `st`.
 
@@ -4178,6 +4185,21 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
                     print(f"[video] Claude smart-edit skipped: {_se}", flush=True)
 
     shots, scene_map = [], []
+    # Duration floor: if the narration came out materially shorter than the
+    # user's requested length (e.g. 300s asked but Claude only wrote ~180s of
+    # speech), gently stretch the per-frame holds so the video runs closer to
+    # the target instead of ending early. Capped at 1.5x so frames never freeze
+    # absurdly; a background music/rumble bed (added below) covers the extra
+    # tail so it isn't dead silence. The real fix is enough narration upstream;
+    # this is a safety net so the output length roughly honours the request.
+    if target_seconds and dur > 0.1 and holds and len(holds) == n:
+        _tgt = float(target_seconds)
+        if _tgt > dur * 1.10:                      # >10% short of target
+            _factor = min(1.5, _tgt / dur)
+            holds = [round(h * _factor, 3) for h in holds]
+            print(f"[video] duration floor: narration {dur:.1f}s -> "
+                  f"holds x{_factor:.2f} toward {_tgt:.0f}s target "
+                  f"(music bed covers the tail)", flush=True)
     for i in range(n):
         try:
             img_path = store.url_to_path(seq[i]["image_url"])
@@ -6894,7 +6916,8 @@ def api_autopilot(body: AutopilotIn, request: Request):
                 smart_edit=body.smart_edit,
                 cut_clicks=body.cut_clicks,
                 cut_click_volume=body.cut_click_volume,
-                cut_click_style=body.cut_click_style)
+                cut_click_style=body.cut_click_style,
+                target_seconds=total_dur)
         except HTTPException as he:
             video_err = str(he.detail)
             print(f"[autopilot] video step FAILED: {he.detail}", flush=True)
