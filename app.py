@@ -6749,9 +6749,13 @@ def api_autopilot(body: AutopilotIn, request: Request):
             store.log_usage("image", 1, 0.08)
             _sheet_box["url"] = sheet_url
             return name
+        # Run the sheet INLINE (no deadline) — character sheets are the
+        # foundation of every frame; better to take the time than to lose
+        # results to a daemon-thread timeout. The image queue still enforces
+        # its own backoff/retries for upstream 502s.
         try:
-            finished, val = _run_with_deadline(_make_sheet, step_to)
-            if finished and val:
+            val = _make_sheet()
+            if val:
                 char_created.append(val)
         except Exception as ce:
             cmsg = str(ce)
@@ -6764,14 +6768,45 @@ def api_autopilot(body: AutopilotIn, request: Request):
                 print("[autopilot] aborting character sheets — image account is "
                       "out of credits or the key is invalid", flush=True)
                 break
-        _ap_prog(run_id, chars_done=len(char_created),
+        # Drive chars_done from the PERSISTED state (source of truth), not the
+        # in-memory char_created accumulator. _make_sheet saves the sheet to
+        # state.characters BEFORE returning; if a sheet finishes between our
+        # deadline check and the next iteration, this picks it up. Also handles
+        # the case where a previous run was stopped mid-sheet — those sheets
+        # are already in state and shouldn't be re-counted as "in progress".
+        try:
+            _cur_state = store.load_state()
+            _persisted_chars = [c for c in (_cur_state.get("characters") or [])
+                                if c.get("sheet_url")]
+            _chars_done_so_far = len(_persisted_chars)
+        except Exception:
+            _chars_done_so_far = len(char_created)
+        _ap_prog(run_id, chars_done=_chars_done_so_far,
                  last_image_url=_sheet_box.get("url"))
     if char_fatal_err:
         char_err_hint = ("character sheets failed — image account problem: "
                          f"{char_fatal_err[:240]}")
     elif chars and not char_created:
-        char_err_hint = (f"0 of {len(chars)} character sheets rendered — check the "
-                         "image API key/credits and size in Settings")
+        # char_created empty — but a sheet saved to state would mean the run
+        # made progress. Check the persisted count so we don't claim "0 of N"
+        # when at least one is actually saved. The state read in the loop
+        # above already updated the progress counter, so this message just
+        # needs to mirror it accurately.
+        try:
+            _final_state = store.load_state()
+            _final_chars = [c for c in (_final_state.get("characters") or [])
+                            if c.get("sheet_url")]
+        except Exception:
+            _final_chars = []
+        if _final_chars:
+            # At least some sheets saved — show partial count, not zero.
+            char_err_hint = (f"{len(_final_chars)} of {len(chars)} character "
+                             f"sheets saved before the step ended (some were "
+                             f"still rendering in the background). The script "
+                             f"step can proceed; re-run for any missing.")
+        else:
+            char_err_hint = (f"0 of {len(chars)} character sheets rendered — check the "
+                             "image API key/credits and size in Settings")
     else:
         char_err_hint = None
     steps.append({"step": "characters", "created": len(char_created),
