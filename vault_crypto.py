@@ -16,7 +16,22 @@ import threading
 
 import config
 
-_SENSITIVE_KEYS = {"api_key", "claude_api_key", "elevenlabs_api_key", "anthropic_api_key", "openai_api_key", "ninerouter_api_key", "mimo_api_key", "agentrouter_api_key"}
+# Any key matching *_api_key or *_secret or *_token must be added here so
+# vault encryption never writes it plaintext. Audited 2026-06-22 after
+# GitGuardian flagged a leaked deepgram_api_key — the omission of that key
+# from this set is what allowed the plaintext leak. Keep this list exhaustive.
+_SENSITIVE_KEYS = {
+    "api_key",
+    "claude_api_key",
+    "elevenlabs_api_key",
+    "anthropic_api_key",
+    "openai_api_key",
+    "ninerouter_api_key",
+    "mimo_api_key",
+    "agentrouter_api_key",
+    "deepgram_api_key",   # TTS provider — fixed 2026-06-22 (was missing)
+    "deepgram_secret",
+}
 _ENC_PREFIX = "enc::"
 _SECRET_PATH = os.path.join(config.DATA_DIR, ".secret")
 
