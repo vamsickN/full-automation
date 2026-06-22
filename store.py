@@ -83,9 +83,18 @@ def _read_index():
 def _write_index(idx):
     os.makedirs(DATA_DIR, exist_ok=True)
     tmp = INDEX_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(idx, f, indent=2)
-    os.replace(tmp, INDEX_PATH)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(idx, f, indent=2)
+        os.replace(tmp, INDEX_PATH)
+    except OSError as e:
+        # Surface disk-full / permission errors clearly instead of raw OSError
+        _errno = getattr(e, "errno", 0)
+        if _errno == 28:  # ENOSPC
+            raise RuntimeError("Disk full — cannot save project index. Free up space and retry.") from e
+        if _errno == 13:  # EACCES
+            raise RuntimeError(f"Permission denied saving project index: {INDEX_PATH}") from e
+        raise RuntimeError(f"Could not save project index: {e}") from e
 
 
 def _project_path(pid):
@@ -96,9 +105,17 @@ def _save_project(pid, state):
     os.makedirs(PROJECTS_DIR, exist_ok=True)
     p = _project_path(pid)
     tmp = p + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2)
-    os.replace(tmp, p)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2)
+        os.replace(tmp, p)
+    except OSError as e:
+        _errno = getattr(e, "errno", 0)
+        if _errno == 28:
+            raise RuntimeError(f"Disk full — cannot save project {pid}. Free up space and retry.") from e
+        if _errno == 13:
+            raise RuntimeError(f"Permission denied saving project {pid}: {p}") from e
+        raise RuntimeError(f"Could not save project {pid}: {e}") from e
 
 
 def _add_project(name, state=None, make_current=True):
@@ -286,8 +303,14 @@ def write_image(kind, data, ext="png"):
     folder = _FOLDER[kind]
     fname = f"{new_id(kind.rstrip('s'))}.{ext}"
     path = os.path.join(folder, fname)
-    with open(path, "wb") as f:
-        f.write(data)
+    try:
+        with open(path, "wb") as f:
+            f.write(data)
+    except OSError as e:
+        _errno = getattr(e, "errno", 0)
+        if _errno == 28:
+            raise RuntimeError(f"Disk full — cannot save {kind} image. Free up space.") from e
+        raise RuntimeError(f"Could not save {kind} image: {e}") from e
     rel = os.path.relpath(path, DATA_DIR).replace(os.sep, "/")
     return f"/data/{rel}"
 
@@ -303,8 +326,14 @@ def write_binary(kind, data, ext, name_hint=None):
     else:
         fname = f"{base}.{ext}"
     path = os.path.join(folder, fname)
-    with open(path, "wb") as f:
-        f.write(data)
+    try:
+        with open(path, "wb") as f:
+            f.write(data)
+    except OSError as e:
+        _errno = getattr(e, "errno", 0)
+        if _errno == 28:
+            raise RuntimeError(f"Disk full — cannot save {kind} file. Free up space.") from e
+        raise RuntimeError(f"Could not save {kind} file: {e}") from e
     rel = os.path.relpath(path, DATA_DIR).replace(os.sep, "/")
     return f"/data/{rel}", path
 
@@ -345,9 +374,13 @@ def _read_usage():
 def _write_usage(entries):
     os.makedirs(DATA_DIR, exist_ok=True)
     tmp = USAGE_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(entries, f)
-    os.replace(tmp, USAGE_PATH)
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(entries, f)
+        os.replace(tmp, USAGE_PATH)
+    except OSError:
+        # Usage logging is non-critical — don't crash the pipeline on disk-full
+        pass
 
 
 def log_usage(kind, count=1, est_cost=0.0, project_id=None):

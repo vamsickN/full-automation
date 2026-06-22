@@ -745,7 +745,17 @@ def _piper_voice_paths(short_id: str):
         import requests
         for local, fname in [(model_path, ".onnx"), (cfg_path, ".onnx.json")]:
             if os.path.exists(local):
-                continue
+                # Sanity: reject obviously truncated files (< 10KB for .onnx,
+                # < 100 bytes for .json) as likely partial downloads from a
+                # prior interrupted attempt. Delete and re-download.
+                if os.path.getsize(local) < (10240 if fname == ".onnx" else 100):
+                    print(f"[piper] removing truncated {fname} ({os.path.getsize(local)} bytes)", flush=True)
+                    try:
+                        os.remove(local)
+                    except OSError:
+                        pass
+                else:
+                    continue
             url = f"{_PIPER_BASE_URL}/{info['hf_path']}{fname}"
             r = requests.get(url, timeout=180, stream=True)
             if r.status_code >= 400:
@@ -753,10 +763,23 @@ def _piper_voice_paths(short_id: str):
                     f"Could not download Piper voice '{short_id}' from "
                     f"Hugging Face (HTTP {r.status_code} on {url}). Check "
                     f"your internet connection or pick a different voice.")
-            with open(local, "wb") as f:
-                for chunk in r.iter_content(chunk_size=1 << 16):
-                    if chunk:
-                        f.write(chunk)
+            # Download to a temp file, then atomically rename. If the download
+            # dies mid-stream (network drop, Ctrl-C), the partial file stays
+            # at .tmp and the final path is never corrupted.
+            tmp_path = local + ".tmp"
+            try:
+                with open(tmp_path, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 16):
+                        if chunk:
+                            f.write(chunk)
+                os.replace(tmp_path, local)
+            except Exception:
+                # Clean up partial temp file so it doesn't accumulate
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+                raise
     return model_path, cfg_path
 
 

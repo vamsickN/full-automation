@@ -1302,7 +1302,7 @@ class GenerateIn(BaseModel):
 
 def _render_one(g_prompt, size, quality, continue_prev, style_lock,
                 character_ids=None, request: Request = None,
-                shot_relation="cut", scene_vo=None):
+                shot_relation="cut", scene_vo=None, scene_n=None):
     """Shared engine for /api/generate and /api/generate-batch.
 
     shot_relation: "continue" = micro-cut of the SAME moment as the previous
@@ -1459,6 +1459,7 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
             # shift the VO-to-frame mapping (positional mapping desyncs when a
             # render is dropped mid-run — e.g. on a transient image-API 502).
             "vo": (scene_vo or "").strip(),
+            "scene_n": scene_n,
             "created": store.now(),
         }
         fresh["sequence"].append(rec)
@@ -5867,7 +5868,10 @@ def _refresh_google_token(refresh_token):
         "grant_type": "refresh_token",
     }, timeout=15)
     if r.status_code == 200:
-        return r.json()
+        try:
+            return r.json()
+        except Exception:
+            return None
     return None
 
 
@@ -7549,20 +7553,23 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
     frames_ok, frames_fail = 0, 0
     fatal_image_err = None
     _skipped_blank = 0
-    # RESUME: frames already rendered (in scene order) are at the front of the
-    # saved sequence. Skip that many scenes so we only render the missing tail.
-    _already_frames = 0
+    # RESUME: collect the scene numbers that already have frames on disk.
+    # Using scene `n` (not positional index) avoids off-by-one when blank
+    # scenes were skipped in the first run (len(sequence) != leading scene count).
+    _rendered_scene_ns = set()
     if _resume:
-        _already_frames = len(store.load_state().get("sequence") or [])
-        if _already_frames:
-            frames_ok = _already_frames   # count existing toward the min-frames gate
-            print(f"[autopilot] RESUME: {_already_frames} frame(s) already "
-                  f"rendered — resuming from scene {_already_frames + 1}",
+        _seq = store.load_state().get("sequence") or []
+        _rendered_scene_ns = {r.get("scene_n") for r in _seq if r.get("scene_n")}
+        if _rendered_scene_ns:
+            print(f"[autopilot] RESUME: {len(_rendered_scene_ns)} frame(s) already "
+                  f"rendered (scenes {sorted(_rendered_scene_ns)}) — skipping them",
                   flush=True)
-            _ap_prog(run_id, frames_done=_already_frames, frames_failed=0)
+            _ap_prog(run_id, frames_done=len(_rendered_scene_ns), frames_failed=0)
     for _scene_i, sc in enumerate(scenes):
         _check_stop(run_id)
-        if _resume and _scene_i < _already_frames:
+        _sc_n = sc.get("n")
+        if _resume and _sc_n and _sc_n in _rendered_scene_ns:
+            frames_ok += 1
             continue   # this scene's frame is already on disk
         p = (sc.get("prompt") or "").strip()
         if not p:
@@ -7598,7 +7605,8 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
                               character_ids=_scene_ids, request=request,
                               shot_relation=sc.get("shot_relation", "cut"),
                               scene_vo=(sc.get("vo") or sc.get("narration")
-                                        or sc.get("voice_over") or ""))
+                                        or sc.get("voice_over") or ""),
+                              scene_n=sc.get("n"))
             frames_ok += 1
             _fr_kw = {"frames_done": frames_ok + frames_fail,
                       "frames_failed": frames_fail}
