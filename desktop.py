@@ -74,10 +74,34 @@ def _prepare_env():
 
 
 def _run_server(port):
-    import uvicorn
-    # Import AFTER env is prepared so DATA_DIR / CS_CONFIG_DIR take effect.
-    import app as _app
-    uvicorn.run(_app.app, host="127.0.0.1", port=port, log_level="warning")
+    try:
+        import uvicorn
+        # Import AFTER env is prepared so DATA_DIR / CS_CONFIG_DIR take effect.
+        import app as _app
+        uvicorn.run(_app.app, host="127.0.0.1", port=port, log_level="warning")
+    except Exception as exc:
+        # Server crashed — write to a log file so the user (and support) can
+        # see WHY.  Without this, a frozen GUI app (console=False) swallows
+        # the traceback silently and _wait_ready() just times out.
+        import traceback, pathlib
+        state = os.environ.get("CS_CONFIG_DIR") or os.environ.get(
+            "LOCALAPPDATA", os.path.expanduser("~"))
+        log_dir = os.path.join(state, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        log_path = os.path.join(log_dir, "server-crash.log")
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(f"Continuity Studio server failed to start on port {port}\n")
+            f.write(f"Python {sys.version}\n")
+            f.write(f"EXE: {sys.executable}\n")
+            f.write(f"Frozen: {getattr(sys, 'frozen', False)}\n\n")
+            traceback.print_exc(file=f)
+        # Also show a MessageBox so the user sees the error immediately.
+        _show_error(
+            "Continuity Studio — server crash",
+            f"The internal server crashed on startup.\n\n"
+            f"Error: {exc}\n\n"
+            f"Full log: {log_path}",
+        )
 
 
 def _wait_ready(url, timeout=40.0):
