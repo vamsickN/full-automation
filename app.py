@@ -6215,6 +6215,26 @@ _AUTOPILOT_PROGRESS = {}
 AP_STEPS = ["analyse", "script", "plan", "characters", "frames", "video", "thumbnail", "seo"]
 
 
+def _ap_fail(run_id, err):
+    """Stamp the breadcrumb as a FAILED (not done) run so the project surfaces
+    as resumable on reload AND the user sees WHY it stopped. Reads the step the
+    run died on from the live progress dict (falls back to disk breadcrumb).
+    Whatever work already saved to disk (script / chars / frames) stays — the
+    user clicks ▶ Resume and the pipeline continues from the saved point."""
+    if not run_id:
+        return
+    try:
+        with _AUTOPILOT_LOCK:
+            p = _AUTOPILOT_PROGRESS.get(run_id) or {}
+            step = p.get("step") or ""
+        # done stays False so _autopilot_disk_status / projects summary flag it
+        # incomplete; error is shown in the picker + Continue banner.
+        _ap_prog(run_id, done=False, error=str(err)[:500],
+                 failed=True, failed_step=step, failed_at=time.time())
+    except Exception as _e:
+        print(f"[autopilot] _ap_fail bookkeeping error: {_e}", flush=True)
+
+
 def _ap_prog(run_id, **kw):
     if not run_id:
         return
@@ -6226,6 +6246,13 @@ def _ap_prog(run_id, **kw):
         })
         if "step" in kw:
             kw["step_index"] = AP_STEPS.index(kw["step"]) if kw["step"] in AP_STEPS else p["step_index"]
+        # A successful completion clears any stale failure flags from an earlier
+        # interrupted attempt on the same run_id (resume → complete), so a now-
+        # finished project doesn't keep showing the old "stopped: <err>".
+        if kw.get("done"):
+            kw.setdefault("failed", False)
+            kw.setdefault("error", "")
+            kw.setdefault("failed_step", "")
         p.update(kw)
         snap = dict(p)
     # Persist a lightweight breadcrumb to the project state on disk so an
@@ -6245,6 +6272,9 @@ def _ap_prog(run_id, **kw):
                 "frames_done": snap.get("frames_done", 0),
                 "frames_total": snap.get("frames_total", 0),
                 "video_url": snap.get("video_url"),
+                "error": snap.get("error") or "",
+                "failed": bool(snap.get("failed")),
+                "failed_step": snap.get("failed_step") or "",
                 "updated": time.time(),
             }
             store.save_state(_st)
@@ -6291,6 +6321,12 @@ def _autopilot_disk_status():
         "has_video": has_video,
         "has_seo": has_seo,
         "done": done_flag,
+        # Why the last run stopped (set by _ap_fail on a mid-run crash) so the
+        # Continue banner / picker can show "stopped: <reason>" instead of a
+        # silent dead run.
+        "error": run.get("error") or "",
+        "failed": bool(run.get("failed")),
+        "failed_step": run.get("failed_step") or "",
     }
 
 
@@ -6379,6 +6415,9 @@ def _project_summary(pid, info):
         "stuck": stuck,
         "last_step": run.get("step"),
         "run_id": run.get("run_id"),
+        "error": run.get("error") or "",
+        "failed": bool(run.get("failed")),
+        "failed_step": run.get("failed_step") or "",
         "frames_done": run.get("frames_done") or len(frames),
         "frames_total": run.get("frames_total") or len(frames),
         "last_inputs": st.get("last_inputs") or {},
@@ -6837,6 +6876,32 @@ def api_autopilot_suggest(body: AutopilotSuggestIn, request: Request):
 
 @app.post("/api/autopilot")
 def api_autopilot(body: AutopilotIn, request: Request):
+    """Thin wrapper around the real pipeline. On ANY mid-run failure it stamps
+    the breadcrumb (done=False + error + the step it died on) so the project
+    reliably shows up as RESUMABLE on page reload — with its saved % — and the
+    user can click ▶ Resume to continue from the exact stopped point. Whatever
+    already saved to disk (script / characters / frames) is never wiped."""
+    _run_id = body.run_id or store.new_id("run")
+    body.run_id = _run_id            # pin so the pipeline + _ap_fail share it
+    try:
+        return _autopilot_pipeline(body, request)
+    except HTTPException as he:
+        # Validation-style 4xx (no key, bad input) — still record so the picker
+        # shows why, but re-raise so the client gets the proper status.
+        try:
+            if int(getattr(he, "status_code", 500)) >= 500:
+                _ap_fail(_run_id, he.detail)
+        except Exception:
+            pass
+        raise
+    except Exception as e:
+        _ap_fail(_run_id, e)
+        print(f"[autopilot] run {_run_id} FAILED mid-pipeline: {e}", flush=True)
+        raise HTTPException(500, f"Autopilot stopped: {e} — your progress is "
+                                 f"saved; click ▶ Resume to continue.")
+
+
+def _autopilot_pipeline(body: AutopilotIn, request: Request):
     """One-click pipeline: YouTube link -> analyse -> script -> characters ->
     frames -> voice-over video -> thumbnail. Returns progress at each step."""
     s = request.state.settings

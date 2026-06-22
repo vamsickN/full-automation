@@ -6535,7 +6535,8 @@ async function checkIncompleteRun(){
         if(s.has_characters) parts.push(`${s.characters} characters`);
         if(s.has_frames) parts.push(`${s.frames} frames`);
         banner.innerHTML=`<span>⏸ Unfinished video found — ${parts.join(", ")||"some progress"} saved`+
-          (s.last_step?` (stopped at: ${_esc(s.last_step)})`:"")+`.</span>`+
+          (s.last_step?` (stopped at: ${_esc(s.last_step)})`:"")+
+          (s.error?` — reason: ${_esc(s.error)}`:"")+`.</span>`+
           `<button class="btn glow sm" style="margin-left:10px" onclick="continueAutopilot()">▶ Continue</button>`;
         banner.style.display="flex";
       }
