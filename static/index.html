@@ -2932,13 +2932,26 @@ function _fmtErr(detail){
 })();
 async function api(path, opts={}){
   const method = (opts.method || "GET").toUpperCase();
-  console.log("[api]", method, path, opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : opts.body || "");
+  // Safe log: don't crash on non-JSON body strings
+  try{ console.log("[api]", method, path, opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : opts.body || ""); }catch(_){ console.log("[api]", method, path, "<body>"); }
+  // Timeout via AbortController — prevents hung connections from blocking
+  // the UI forever. Autopilot POSTs can legitimately take 10+ minutes, so we
+  // use a generous per-request timeout (5 min for GET, 15 min for POST).
+  const isPost = method === "POST" || method === "PUT" || method === "PATCH";
+  const timeoutMs = isPost ? 900000 : 300000;
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  opts.signal = ac.signal;
   let r;
   try{ r = await fetch(path, opts); }
   catch(netErr){
-    console.error("[api] network error", path, netErr);
-    throw new Error("Network error: " + netErr.message);
+    clearTimeout(timer);
+    // AbortController timeout surfaces as AbortError
+    const isTimeout = netErr.name === "AbortError";
+    console.error("[api]", isTimeout ? "timeout" : "network error", path, netErr);
+    throw new Error(isTimeout ? `Request timed out (${timeoutMs/1000}s)` : "Network error: " + netErr.message);
   }
+  finally{ clearTimeout(timer); }
   if(!r.ok){
     let d, raw;
     try{ raw = await r.text(); d = raw ? JSON.parse(raw) : {}; }catch{ d = {raw}; }
@@ -3301,11 +3314,31 @@ async function resumeProject(id){
     }
   }catch(_){}
   toast(`Resuming "${name}"…`);
+  const b=$(`#apBtn`); busy(b,true,"Resuming…");
+  $(`#apStopBtn`).style.display="inline-flex"; $(`#apRegenBtn`).style.display="none";
   try{
     // Same shape as runAutopilot — POST, set AP_RUN_ID, show the progress
     // panel, drive the existing poll loop. Reusing the runAutopilot UI
     // (apPaint, #apProgress, etc.) means no duplicated progress plumbing.
-    const d = await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:id, resume:true, fresh:false, from_cache:true})});
+    // Network-retry loop: auto-reconnect on Network error (same as runAutopilot).
+    const AP_MAX_NET_RETRIES=4;
+    let d=null, _netTries=0;
+    while(true){
+      try{
+        d = await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:id, resume:true, fresh:false, from_cache:true})});
+        break;
+      }catch(err){
+        const isNet=/Network error|timed out/i.test(err.message||"");
+        if(isNet && _netTries<AP_MAX_NET_RETRIES){
+          _netTries++;
+          $(`#apStat`).textContent=`reconnecting… (${_netTries}/${AP_MAX_NET_RETRIES}) — your progress is saved`;
+          toast(`Connection blip — reconnecting (${_netTries}/${AP_MAX_NET_RETRIES})`,"");
+          await new Promise(r=>setTimeout(r, 4000));
+          continue;
+        }
+        throw err;
+      }
+    }
     if(d && d.run_id){
       AP_LAST = {run_id:d.run_id, idx:0};
       AP_RUN_ID = d.run_id;
@@ -3313,13 +3346,39 @@ async function resumeProject(id){
         prog.innerHTML=`<div class="q-head"><div class="q-bar"><div class="q-fill" id="apFill" style="width:0%"></div></div><span class="q-stat" id="apStat">resuming ${_esc(name)}…</span></div>`;
       }
       try{ engStart(); }catch(_){}
-      clearInterval(AP_TIMER);
-      AP_TIMER = setInterval(async()=>{
-        try{ const p=await api("/api/autopilot/progress/"+AP_RUN_ID); if(p&&!p.unknown) apPaint(p); }catch(_){}
+      // Use AP_POLL (not AP_TIMER) so stopAutopilot() can clear it
+      clearInterval(AP_POLL); clearInterval(AP_TIMER);
+      AP_POLL = setInterval(async()=>{
+        try{
+          const p=await api("/api/autopilot/progress/"+AP_RUN_ID);
+          if(p && !p.unknown){
+            apPaint(p);
+            // Terminal: done or error — stop polling + re-enable buttons
+            if(p.done || p.error){
+              clearInterval(AP_POLL); AP_POLL=null;
+              $(`#apStopBtn`).style.display="none"; $(`#apRegenBtn`).style.display="inline-flex";
+              busy(b,false);
+              try{ engFinish(!!p.video_url); }catch(_){}
+              if(p.error) toast(`Resume stopped: ${p.error}`,"err");
+            }
+          }
+        }catch(_){}
       }, 1500);
     }
+    STATE=await api("/api/state").then(r=>r.state);
+    renderBoard(); renderCharacters(); renderCast(); renderEditsList();
     toast(`Resumed ✓ — ${name}`,"ok");
-  }catch(e){ toast(e.message||"Resume failed","err"); }
+  }catch(e){
+    clearInterval(AP_POLL); AP_POLL=null;
+    toast(e.message||"Resume failed","err");
+    const _failHtml=`<div style="color:var(--red);font-size:13px">Resume failed: ${_esc(e.message)}</div>`+
+      `<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">`+
+      `<button class="btn glow sm" onclick="continueAutopilot()">▶ Continue from where it stopped</button>`+
+      `</div>`;
+    $(`#apResult`).innerHTML=_failHtml;
+  }finally{
+    busy(b,false); $(`#apStopBtn`).style.display="none"; $(`#apRegenBtn`).style.display="inline-flex";
+  }
 }
 async function duplicateProject(id){
   $("#projMenu").classList.remove("show");
@@ -6237,7 +6296,7 @@ function renderUsage(){
 }
 
 /* ---------- AUTOPILOT ---------- */
-let AP_RUN_ID=null, AP_TIMER=null, AP_STEP_START=0, AP_CUR_STEP=0, AP_STEP_LIMIT=60;
+let AP_RUN_ID=null, AP_TIMER=null, AP_POLL=null, AP_STEP_START=0, AP_CUR_STEP=0, AP_STEP_LIMIT=60;
 async function loadApVoices(){
   if(!CFG.has_voice_key){ toast("Add your ElevenLabs key in Settings","err"); openSettings(); return; }
   const b=$("#apVoiceBtn"); busy(b,true,"…");
@@ -6251,6 +6310,9 @@ async function loadApVoices(){
 }
 async function stopAutopilot(){
   if(!AP_RUN_ID) return;
+  // Clear any active poll intervals to stop hammering the server
+  clearInterval(AP_TIMER); clearInterval(AP_POLL);
+  AP_TIMER=null; AP_POLL=null;
   try{ await api("/api/autopilot/stop",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({run_id:AP_RUN_ID})}); toast("Stopping after the current step…",""); }
   catch(e){ toast(e.message,"err"); }
 }
@@ -6410,7 +6472,9 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
   apMark(0,"active");
   try{ engStart(); }catch(_){}
   // Real progress: poll the server for step + how many images are done + ETA.
-  const poll=setInterval(async()=>{
+  // Use the global AP_POLL so stopAutopilot() can clear it.
+  clearInterval(AP_POLL);
+  AP_POLL=setInterval(async()=>{
     try{ const p=await api("/api/autopilot/progress/"+AP_RUN_ID); if(p&&!p.unknown) apPaint(p); }catch(_){}
   },1500);
   const b=$("#apBtn"); busy(b,true,"Running — this may take several minutes…");
@@ -6446,7 +6510,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
         throw err;  // not a network error, or out of retries -> surface it
       }
     }
-    clearInterval(poll);
+    clearInterval(AP_POLL);
     STATE=await api("/api/state").then(r=>r.state);
     try{ const _cb=$("#apContinueBanner"); if(_cb) _cb.style.display="none"; }catch(_){}
     renderBoard(); renderCharacters(); renderCast(); renderEditsList();
@@ -6499,7 +6563,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
       else{ toast(videoErr||frameErr||"Autopilot done — no video (check errors above)",""); }
     }
   }catch(e){
-    clearInterval(poll);
+    clearInterval(AP_POLL);
     AP_STEP_NAMES.forEach((_,i)=>{const dot=document.querySelector(`#aps${i} .ap-dot`);if(dot&&dot.classList.contains("wait"))dot.className="ap-dot";});
     try{ engFinish(false); engCore({title:"Engine stopped", sub:_esc(e.message||"failed")}); }catch(_){}
     toast(e.message,"err");
@@ -6512,7 +6576,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
       `</div>`;
     if(_isNet) _failHtml+=`<div style="font-size:12px;color:var(--muted);margin-top:6px">Your script, characters and rendered frames are saved. Continue resumes only the missing steps.</div>`;
     $("#apResult").innerHTML=_failHtml;
-  }finally{ busy(b,false); $("#apStopBtn").style.display="none"; $("#apRegenBtn").style.display="inline-flex"; AP_RUN_ID=null; AP_SAMPLE_URL=""; }
+  }finally{ busy(b,false); $("#apStopBtn").style.display="none"; $("#apRegenBtn").style.display="inline-flex"; clearInterval(AP_POLL); AP_POLL=null; AP_RUN_ID=null; AP_SAMPLE_URL=""; }
 }
 
 // ── CONTINUE an interrupted run ─────────────────────────────────────────────

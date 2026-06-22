@@ -5256,7 +5256,7 @@ def api_edit_plan(e: EditPlanIn, request: Request):
     try:
         plan = get_claude_client(request).plan_edit(
             frames=frames,                       # all frames; client chunks in 18s
-            audio_duration=float(st["audio"]["duration"]) or 0,
+            audio_duration=float((st.get("audio") or {}).get("duration") or 0),
             user_brief=e.user_brief,
             master_prompt=st["master_prompt"],
             vo_lines=_scene_vo_lines(st),        # match imagery to the words said
@@ -5269,7 +5269,7 @@ def api_edit_plan(e: EditPlanIn, request: Request):
     # shot hold-times to sum EXACTLY to the real audio duration so the cut stays
     # locked to the audio. Scale proportionally, clamp to a 0.2s floor, then
     # absorb any rounding residue into the final shot.
-    audio_dur = float(st["audio"]["duration"]) or 0.0
+    audio_dur = float((st.get("audio") or {}).get("duration") or 0.0)
     shots = plan.get("shots") or []
     if audio_dur > 0 and shots:
         cur = sum(max(0.0, float(s.get("duration") or 0.0)) for s in shots)
@@ -6885,6 +6885,12 @@ def api_autopilot(body: AutopilotIn, request: Request):
     body.run_id = _run_id            # pin so the pipeline + _ap_fail share it
     try:
         return _autopilot_pipeline(body, request)
+    except _Stopped:
+        # User clicked Stop — this is a clean intentional stop, NOT a crash.
+        # The _Stopped exception handler at app.exception_handler(_Stopped)
+        # will return a clean 200 with steps kept. Must NOT be caught by the
+        # generic Exception handler below (that was marking it as a failure).
+        raise
     except HTTPException as he:
         # Validation-style 4xx (no key, bad input) — still record so the picker
         # shows why, but re-raise so the client gets the proper status.
@@ -7510,7 +7516,7 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
     while len(scenes) < _final_expected:
         _last = scenes[-1] if scenes else {}
         _base_p = (_last.get("prompt") or "").strip()
-        _cue = _MOMENT_CUES[(len(scenes) % (len(_MOMENT_CUES) - 1)) + 1]
+        _cue = _angle_cue_for(len(scenes))
         scenes.append({
             "n": len(scenes) + 1,
             "heading": _last.get("heading", "continuation"),
@@ -8101,7 +8107,7 @@ def api_audio_to_video(body: AudioToVideoIn, request: Request):
         i = len(scenes)
         seg = segments[i]
         base = scenes[-1].get("prompt", "") if scenes else (style_notes or "scene")
-        cue = _MOMENT_CUES[(i % (len(_MOMENT_CUES) - 1)) + 1]
+        cue = _angle_cue_for(i)
         scenes.append({"n": i + 1, "vo": (seg.get("text") or "").strip(),
                        "prompt": _sanitize_prompt(f"{base}, {cue}"),
                        "shot_relation": "cut"})
@@ -8428,7 +8434,7 @@ def api_a2v_preview(body: A2VPreviewIn, request: Request):
         i = len(scenes)
         seg = segments[i]
         base = scenes[-1].get("prompt", "") if scenes else (style_notes or "scene")
-        cue = _MOMENT_CUES[(i % (len(_MOMENT_CUES) - 1)) + 1]
+        cue = _angle_cue_for(i)
         scenes.append({"n": i + 1, "vo": (seg.get("text") or "").strip(),
                        "prompt": _sanitize_prompt(f"{base}, {cue}"),
                        "shot_relation": "cut"})
