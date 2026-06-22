@@ -8,6 +8,7 @@ Produces a one-folder app at dist/ContinuityStudio/ that needs NO Python and
 NO system ffmpeg on the target machine. Inno Setup wraps dist/ into Setup.exe.
 """
 from PyInstaller.utils.hooks import collect_submodules, collect_data_files
+import os
 
 block_cipher = None
 
@@ -56,6 +57,13 @@ a = Analysis(
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Strip sensitive / user-specific files that should NOT be bundled into the
+# installer.  Each user's vault.json / users.json / codes.json / .secret is
+# created at first run in %LOCALAPPDATA%\ContinuityStudio\.  Bundling a
+# dev-machine copy would cause encryption-key mismatch errors on install.
+_strip = {"vault.json", "users.json", "codes.json", ".secret"}
+a.datas = [t for t in a.datas if os.path.basename(t[0]) not in _strip]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

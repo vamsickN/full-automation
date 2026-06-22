@@ -38,6 +38,8 @@ _SECRET_PATH = os.path.join(config.DATA_DIR, ".secret")
 _fernet = None
 _fallback = False
 _INIT_LOCK = threading.Lock()
+_decrypt_failures = 0          # track consecutive decrypt failures for auto-recovery
+_AUTO_RECOVERY_THRESHOLD = 3   # if this many keys fail, nuke and start fresh
 
 
 def _init_fernet():
@@ -102,6 +104,7 @@ def _encrypt(value):
 
 def _decrypt(value):
     """Decrypt an enc::-prefixed value. Returns plaintext."""
+    global _decrypt_failures
     _init_fernet()
     if not value or not isinstance(value, str):
         return value
@@ -110,14 +113,11 @@ def _decrypt(value):
     if _fallback or not _fernet:
         return value
     try:
-        return _fernet.decrypt(value[len(_ENC_PREFIX):].encode()).decode()
+        result = _fernet.decrypt(value[len(_ENC_PREFIX):].encode()).decode()
+        _decrypt_failures = 0  # reset on success
+        return result
     except Exception:
-        # Return the original encrypted value instead of empty string.
-        # This prevents silent data loss on key rotation — the caller gets
-        # the encrypted blob back, which is useless but not destructive.
-        # On next save with the correct key, it will be re-encrypted.
-        print("[vault] WARNING: decryption failed — key may have changed; "
-              "original encrypted value preserved", flush=True)
+        _decrypt_failures += 1
         return value
 
 
@@ -136,6 +136,8 @@ def encrypt_vault(vault):
 
 def decrypt_vault(vault):
     """Return a copy of vault with sensitive fields decrypted."""
+    global _decrypt_failures
+    _decrypt_failures = 0
     out = {}
     for email, settings in vault.items():
         s = dict(settings)
@@ -144,7 +146,44 @@ def decrypt_vault(vault):
             if v:
                 s[k] = _decrypt(v)
         out[email] = s
+
+    # Auto-recovery: if ALL encrypted keys failed to decrypt, the .secret key
+    # changed (reinstall, different machine, corrupted file). Nuke the vault
+    # and regenerate the key so the app starts clean instead of spamming
+    # warnings on every request.
+    if _decrypt_failures >= _AUTO_RECOVERY_THRESHOLD:
+        _nuke_and_recover()
+        return {}  # clean vault — user re-enters keys in Settings
+
     return out
+
+
+def _nuke_and_recover():
+    """Delete the old .secret and vault.json. Called when too many decrypt
+    failures indicate the encryption key is irrecoverably mismatched."""
+    global _fernet, _fallback
+    print(f"[vault] {_decrypt_failures} keys failed to decrypt — encryption key "
+          "mismatch detected. Regenerating vault (you'll re-enter API keys in "
+          "Settings).", flush=True)
+    try:
+        if os.path.exists(_SECRET_PATH):
+            os.remove(_SECRET_PATH)
+    except Exception:
+        pass
+    # Also delete the vault.json in the config dir so the app starts fresh
+    # instead of re-reading the undecryptable file in a loop.
+    try:
+        import config as _cfg
+        _vault_path = os.path.join(
+            os.environ.get("CS_CONFIG_DIR") or os.path.dirname(__file__),
+            "vault.json")
+        if os.path.exists(_vault_path):
+            os.remove(_vault_path)
+    except Exception:
+        pass
+    # Reset the Fernet state so _init_fernet() creates a fresh key on next call
+    _fernet = None
+    _fallback = False
 
 
 def is_encrypted():
