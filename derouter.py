@@ -578,7 +578,13 @@ class OpenRouterImageClient:
             raise RuntimeError(
                 f"OpenRouter image gen failed [HTTP {resp.status_code}]: {resp.text[:600]}"
             )
-        raw = self._extract_image(resp.json())
+        try:
+            raw = self._extract_image(resp.json())
+        except (ValueError, KeyError, TypeError) as e:
+            raise RuntimeError(
+                f"OpenRouter returned non-JSON response [HTTP {resp.status_code}]: "
+                f"{resp.text[:300]}"
+            ) from e
         return self._force_aspect(raw, size)
 
     def edit(self, prompt, images, size=None, quality=None, mask=None,
@@ -631,5 +637,11 @@ class OpenRouterImageClient:
             raise RuntimeError(
                 f"OpenRouter image edit failed [HTTP {resp.status_code}]: {resp.text[:600]}"
             )
-        raw = self._extract_image(resp.json())
+        try:
+            raw = self._extract_image(resp.json())
+        except (ValueError, KeyError, TypeError) as e:
+            raise RuntimeError(
+                f"OpenRouter returned non-JSON edit response [HTTP {resp.status_code}]: "
+                f"{resp.text[:300]}"
+            ) from e
         return self._force_aspect(raw, size)

@@ -249,12 +249,20 @@ def download_frames(url: str, max_frames: int = 12, duration_hint: int = 0):
             path = ydl.prepare_filename(info)
     except Exception as e:
         _log(f"download failed: {e}")
+        # Clean up any partial downloads (.part files) left by yt-dlp
+        import glob as _glob
+        for _pf in _glob.glob(os.path.join(store.UPLOADS_DIR, f"{tag}.*")):
+            if ".part" in _pf:
+                try: os.remove(_pf)
+                except OSError: pass
         return [], None
 
     if not path or not os.path.exists(path):
         # yt-dlp may have remuxed to a different extension.
         import glob
-        hits = glob.glob(os.path.join(store.UPLOADS_DIR, f"{tag}.*"))
+        # Exclude .part files — those are incomplete downloads, not valid media
+        hits = [h for h in glob.glob(os.path.join(store.UPLOADS_DIR, f"{tag}.*"))
+                if ".part" not in h]
         path = hits[0] if hits else None
     if not path or not os.path.exists(path):
         return [], None

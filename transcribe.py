@@ -68,7 +68,34 @@ def _get_local_model(size: str):
         return _LOCAL_MODEL_CACHE[size]
     from faster_whisper import WhisperModel
     # int8 on CPU keeps memory + speed sane on a modest box.
-    model = WhisperModel(size, device="cpu", compute_type="int8")
+    # First use downloads the model from HuggingFace — which can hang on a
+    # flaky network (ctranslate2 has no Python-level timeout). Run in a
+    # daemon thread with a 5-min deadline so the caller gets a clear error
+    # instead of an infinite hang.
+    import threading
+    result, error = {}, {}
+
+    def _load():
+        try:
+            result["m"] = WhisperModel(size, device="cpu", compute_type="int8")
+        except Exception as e:
+            error["e"] = e
+
+    t = threading.Thread(target=_load, daemon=True)
+    t.start()
+    t.join(timeout=300)  # 5 min cap for first download
+    if t.is_alive():
+        raise RuntimeError(
+            f"Whisper model '{size}' download timed out (5 min). "
+            f"Check your internet connection, or pre-download manually:\n"
+            f"    python -c \"from faster_whisper import WhisperModel; "
+            f"WhisperModel('{size}', device='cpu', compute_type='int8')\""
+        )
+    if "e" in error:
+        raise error["e"]
+    model = result.get("m")
+    if model is None:
+        raise RuntimeError(f"Whisper model '{size}' failed to load (unknown error)")
     _LOCAL_MODEL_CACHE[size] = model
     return model
 

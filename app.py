@@ -5826,36 +5826,43 @@ import requests as _requests
 
 _GOOGLE_TOKEN_PATH = os.path.join(config.DATA_DIR, "google_tokens.json")
 _GOOGLE_SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/drive.file"
+_GOOGLE_TOKEN_LOCK = threading.Lock()
 
 
 def _load_google_tokens():
     if not os.path.exists(_GOOGLE_TOKEN_PATH):
         return {}
-    with open(_GOOGLE_TOKEN_PATH, "r") as f:
-        return json.load(f)
+    try:
+        with open(_GOOGLE_TOKEN_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def _save_google_tokens(tokens):
     os.makedirs(config.DATA_DIR, exist_ok=True)
-    with open(_GOOGLE_TOKEN_PATH, "w") as f:
+    tmp = _GOOGLE_TOKEN_PATH + ".tmp"
+    with open(tmp, "w") as f:
         json.dump(tokens, f, indent=2)
+    os.replace(tmp, _GOOGLE_TOKEN_PATH)
 
 
 def _google_token_for(email):
-    tokens = _load_google_tokens()
-    entry = tokens.get(email or "_default")
-    if not entry:
-        return None
-    if entry.get("expires_at", 0) < time.time() - 60:
-        refreshed = _refresh_google_token(entry.get("refresh_token"))
-        if refreshed:
-            entry["access_token"] = refreshed["access_token"]
-            entry["expires_at"] = time.time() + refreshed.get("expires_in", 3600)
-            tokens[email or "_default"] = entry
-            _save_google_tokens(tokens)
-        else:
+    with _GOOGLE_TOKEN_LOCK:
+        tokens = _load_google_tokens()
+        entry = tokens.get(email or "_default")
+        if not entry:
             return None
-    return entry.get("access_token")
+        if entry.get("expires_at", 0) < time.time() - 60:
+            refreshed = _refresh_google_token(entry.get("refresh_token"))
+            if refreshed:
+                entry["access_token"] = refreshed["access_token"]
+                entry["expires_at"] = time.time() + refreshed.get("expires_in", 3600)
+                tokens[email or "_default"] = entry
+                _save_google_tokens(tokens)
+            else:
+                return None
+        return entry.get("access_token")
 
 
 def _refresh_google_token(refresh_token):
@@ -5908,13 +5915,14 @@ def google_callback(code: str = "", error: str = "", request: Request = None):
         raise HTTPException(500, f"Token exchange failed: {r.text[:200]}")
     data = r.json()
     email = request.state.user_email if request else "_default"
-    tokens = _load_google_tokens()
-    tokens[email or "_default"] = {
-        "access_token": data["access_token"],
-        "refresh_token": data.get("refresh_token", tokens.get(email or "_default", {}).get("refresh_token", "")),
-        "expires_at": time.time() + data.get("expires_in", 3600),
-    }
-    _save_google_tokens(tokens)
+    with _GOOGLE_TOKEN_LOCK:
+        tokens = _load_google_tokens()
+        tokens[email or "_default"] = {
+            "access_token": data["access_token"],
+            "refresh_token": data.get("refresh_token", tokens.get(email or "_default", {}).get("refresh_token", "")),
+            "expires_at": time.time() + data.get("expires_in", 3600),
+        }
+        _save_google_tokens(tokens)
     return HTMLResponse("<html><body><h2>Google connected!</h2><p>You can close this tab.</p>"
                         "<script>window.close()</script></body></html>")
 
@@ -6178,12 +6186,34 @@ async def _stopped_handler(request: Request, exc: _Stopped):
         "detail": "Autopilot stopped — finished steps were kept."})
 
 
+_BACKGROUND_THREADS = []
+_BG_THREAD_LOCK = threading.Lock()
+
+
+def _cleanup_bg_threads():
+    """Reap completed background threads so they don't accumulate forever."""
+    with _BG_THREAD_LOCK:
+        _BACKGROUND_THREADS[:] = [t for t in _BACKGROUND_THREADS if t.is_alive()]
+
+
 def _run_with_deadline(fn, seconds):
     """Run ``fn`` in a daemon thread and stop WAITING after ``seconds`` so a
     stalled heavy step doesn't hang the whole run. Returns (finished, value).
     A step that times out keeps finishing in the background — its results just
     appear a little later — which is safe here because every step only appends
-    to project state. Exceptions raised by ``fn`` are re-raised."""
+    to project state. Exceptions raised by ``fn`` are re-raised.
+
+    Timed-out threads are tracked and reaped so they don't accumulate forever.
+    A hard cap of 10 concurrent background threads prevents runaway resource
+    usage from repeated timeouts."""
+    _cleanup_bg_threads()
+    with _BG_THREAD_LOCK:
+        if len(_BACKGROUND_THREADS) >= 10:
+            # Too many timed-out threads still running — wait for the oldest
+            # one to finish before starting another (prevents runaway).
+            oldest = _BACKGROUND_THREADS[0]
+            oldest.join(timeout=30)
+            _BACKGROUND_THREADS[:] = [t for t in _BACKGROUND_THREADS if t.is_alive()]
     box = {}
 
     def worker():
@@ -6196,6 +6226,8 @@ def _run_with_deadline(fn, seconds):
     t.start()
     t.join(max(1.0, float(seconds)))
     if t.is_alive():
+        with _BG_THREAD_LOCK:
+            _BACKGROUND_THREADS.append(t)
         return (False, None)
     if "e" in box:
         raise box["e"]

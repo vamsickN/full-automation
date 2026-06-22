@@ -47,7 +47,16 @@ def _post_with_retry(url, *, headers, json=None, timeout=180,
             raise RuntimeError(f"{what} failed: {e}")
         if r.status_code in _RETRY_STATUS and attempt < max_retries:
             last_exc = f"[{r.status_code}] {r.text[:200]}"
-            time.sleep(backoff * (2 ** attempt))
+            # Honor Retry-After header if present (common on 429 rate limits)
+            retry_after = r.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    wait = max(1.0, min(float(retry_after), 60.0))
+                except (ValueError, TypeError):
+                    wait = backoff * (2 ** attempt)
+            else:
+                wait = backoff * (2 ** attempt)
+            time.sleep(wait)
             continue
         return r
     # Exhausted retries on a transient status.

@@ -268,7 +268,16 @@ class ClaudeClient:
                 if r.status_code == 429 or r.status_code >= 500:
                     last_err = f"[{r.status_code}] {r.text[:300]}"
                     _log(f"chat {r.status_code} (attempt {attempt}) — backing off")
-                    time.sleep(min(20, 2 ** attempt))
+                    # Honor Retry-After header if present (common on 429)
+                    retry_after = r.headers.get("Retry-After")
+                    if retry_after:
+                        try:
+                            wait = max(1.0, min(float(retry_after), 60.0))
+                        except (ValueError, TypeError):
+                            wait = min(20, 2 ** attempt)
+                    else:
+                        wait = min(20, 2 ** attempt)
+                    time.sleep(wait)
                     continue
                 if r.status_code >= 400:
                     # If the model doesn't support image input (404 with
