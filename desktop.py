@@ -134,7 +134,7 @@ def main():
     t = threading.Thread(target=_run_server, args=(port,), daemon=True)
     t.start()
 
-    if not _wait_ready(url, timeout=45):
+    if not _wait_ready(url, timeout=90):
         _show_error(
             "Continuity Studio",
             f"The internal server didn't start in time on {url}.\n"
