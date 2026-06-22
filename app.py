@@ -6348,7 +6348,11 @@ def _project_summary(pid, info):
         incomplete = has_script or has_chars or has_frames
     # Progress percentage — weight the heavy step (frames) the most so the bar
     # feels honest. Script + characters are cheap; frames + video are slow.
-    if has_video and done_flag:
+    # A project with a video is functionally done even without a breadcrumb
+    # (the video IS the proof of completion) — without that rule, every
+    # fresh page-load of a finished project flashes "partial" until the user
+    # re-runs and re-completes the autopilot.
+    if has_video and (done_flag or not run):
         pct = 100
         status = "done"
     elif stuck:
@@ -6375,19 +6379,17 @@ def _project_summary(pid, info):
         "stuck": stuck,
         "last_step": run.get("step"),
         "run_id": run.get("run_id"),
-        "breadcrumb_updated": breadcrumb_updated or None,
-        "has_script": has_script, "scenes": len(scenes),
-        "has_characters": has_chars, "characters": len(chars),
+        "frames_done": run.get("frames_done") or len(frames),
+        "frames_total": run.get("frames_total") or len(frames),
+        "last_inputs": st.get("last_inputs") or {},
+        # Use the breadcrumb counters when available so the bar reflects the
+        # in-flight totals; otherwise fall back to what's on disk.
         "has_frames": has_frames, "frames": len(frames),
         "has_video": has_video,
         "has_seo": has_seo,
         "done": done_flag,
-        # Use the breadcrumb counters when available so the bar reflects the
-        # in-flight totals; otherwise fall back to what's on disk.
         "chars_done": run.get("chars_done") or len(chars),
         "chars_total": run.get("chars_total") or len(chars),
-        "frames_done": run.get("frames_done") or len(frames),
-        "frames_total": run.get("frames_total") or len(frames),
     }
 
 
@@ -6942,6 +6944,30 @@ def api_autopilot(body: AutopilotIn, request: Request):
         else:
             use_cache = (body.from_cache and cached.get("suggestions")
                          and (cached.get("input_urls") or [cached.get("url")]) == urls)
+
+    # ── PERSIST last_inputs ──────────────────────────────────────────────────
+    # Make the project's source explicitly recoverable after page reload so
+    # the frontend can pre-fill the URL textbox + the Resume button can show
+    # "▶ Resume (3 YT links)" / "▶ Resume (upload: foo.mp4)". Survives even
+    # if yt_inspiration gets rebuilt — last_inputs is the load-bearing
+    # snapshot the picker shows.
+    try:
+        with _state_write_lock:
+            _li_st = store.load_state()
+            _li_st["last_inputs"] = {
+                "type": "upload" if _is_upload else "youtube",
+                "urls": list(urls),
+                "upload_name": (cached.get("upload_name")
+                                or cached.get("source_filename")
+                                or (urls[0].replace("upload://", "")
+                                    if urls and urls[0].startswith("upload://")
+                                    else "")),
+                "captured_at": time.time(),
+            }
+            store.save_state(_li_st)
+    except Exception as _li_err:
+        print(f"[autopilot] warn: last_inputs persist failed: {_li_err}",
+              flush=True)
     insp = cached if use_cache else _autopilot_analyze(
         urls, body.nudge, body.model, request, 10,
         constraints={"target_seconds": body.target_seconds,

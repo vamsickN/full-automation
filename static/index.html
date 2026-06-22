@@ -3188,18 +3188,38 @@ function _projRow(p, on){
               : status==="in_progress" ? "In progress"
               : status==="partial" ? "Partial"
               : "Empty";
+  // Stored source chip + resume sub-label so the picker shows WHAT each
+  // project was last analysed from (helps the user trust that Resume will
+  // find the right URLs/upload). The backend stamps state.last_inputs on
+  // every autopilot kickoff; loadProjects() pulls it via /api/projects/summary.
+  let srcChip = "";
+  let resumeSub = "";
+  if(s && s.last_inputs && s.last_inputs.urls && s.last_inputs.urls.length){
+    const li = s.last_inputs;
+    const isUp = li.type==="upload";
+    if(isUp){
+      const nm = (li.upload_name||"sample video").split(/[\\/]/).pop();
+      srcChip = `<span class="pm-src upload" title="Last source: uploaded sample video">📁 ${_esc(nm||"upload")}</span>`;
+      resumeSub = `<div class="pm-resume-sub">${_esc(nm||"upload")}</div>`;
+    } else {
+      const n = li.urls.length;
+      const first = (li.urls[0]||"").replace(/^https?:\/\/(www\.)?/,"").slice(0,22);
+      srcChip = `<span class="pm-src" title="${_esc(li.urls.join(", "))}">🔗 ${n} link${n>1?"s":""}${first?` · ${_esc(first)}`:""}</span>`;
+      resumeSub = `<div class="pm-resume-sub">${n} link${n>1?"s":""}</div>`;
+    }
+  }
   // Resume button: shown when stuck OR (incomplete AND not current). Current
   // project already shows its own big Continue banner — no need to duplicate.
   const showResume = (stuck || incomplete) && !on;
   const resumeBtn = showResume
-    ? `<button class="pm-resume ${stuck?'stuck':''}" data-act="resume" title="Resume this project from where it stopped">▶ Resume</button>`
+    ? `<button class="pm-resume ${stuck?'stuck':''}" data-act="resume" title="Resume this project from where it stopped"><div class="pm-resume-title">▶ Resume</div>${resumeSub}</button>`
     : "";
   return `<div class="pm-item ${on?'on':''}" data-id="${p.id}">
     <span class="pi-dot"></span>
     <div class="pm-body">
       <div class="pm-row1">
         <span class="nm" title="${_esc(p.name)}">${_esc(p.name)}</span>
-        ${s ? `<span class="pm-pct">${pct}%</span><span class="pm-status ${_esc(status)}">${_esc(label)}</span>` : ""}
+        ${s ? `<span class="pm-pct">${pct}%</span><span class="pm-status ${_esc(status)}">${_esc(label)}</span>${srcChip}` : ""}
       </div>
       ${s ? `<div class="pm-bar"><div class="pm-bar-fill" style="width:${pct}%; background:${stuck?'var(--red)':status==='done'?'var(--teal)':'var(--amber)'}"></div></div>` : ""}
       <div class="pm-row2">
@@ -3254,10 +3274,32 @@ async function resumeProject(id){
   const proj = (PROJECTS.projects||[]).find(p=>p.id===id);
   const name = proj ? proj.name : id;
   const tag = s && s.stuck ? "stuck" : (s && s.incomplete ? "incomplete" : "saved");
-  if(!confirm(`Resume "${name}"?
-
-This project is ${tag}. The autopilot will reuse what's already saved (script, characters, frames) and only run the missing steps.`)) return;
+  // Build a clear source line so the user sees WHAT we're resuming with
+  // (no more "where did my links go?").
+  let srcLine = "";
+  if(s && s.last_inputs && s.last_inputs.urls && s.last_inputs.urls.length){
+    const li = s.last_inputs;
+    if(li.type==="upload"){
+      const nm = (li.upload_name||"sample video").split(/[\\/]/).pop();
+      srcLine = `\nSource: uploaded sample video (${nm})`;
+    } else {
+      srcLine = `\nSource: ${li.urls.length} YouTube link(s)`;
+    }
+  }
+  if(!confirm(`Resume "${name}"?\n\nThis project is ${tag}. The autopilot will reuse what's already saved (script, characters, frames) and only run the missing steps.${srcLine}`)) return;
   $("#projMenu").classList.remove("show");
+  // Pre-fill the URL input from cached state so the user SEES what we're
+  // resuming with. For uploads the file itself can't be re-attached
+  // (browsers don't persist file inputs) but the cached analysis + style
+  // anchors are enough to drive the resume.
+  try{
+    if(s && s.last_inputs && s.last_inputs.urls){
+      const li = s.last_inputs;
+      const apUrl = $("#apUrl");
+      if(apUrl && li.type!=="upload") apUrl.value = li.urls.join("\n");
+      AP_SAMPLE_URL = (li.type==="upload" && li.urls && li.urls.length) ? li.urls[0] : "";
+    }
+  }catch(_){}
   toast(`Resuming "${name}"…`);
   try{
     // Same shape as runAutopilot — POST, set AP_RUN_ID, show the progress
@@ -3457,6 +3499,45 @@ async function load(){
   renderMusic();
   if(STATE.music) $("#tgUseMusic").classList.add("on");
   renderBrand();
+  // Pre-fill the autopilot URL textbox from cached last_inputs. The textbox
+  // is project-scoped — switching projects re-loads this, so always apply
+  // (don't gate on emptiness, the old project's leftover text would
+  // persist otherwise and "still same" Resume would point at the wrong
+  // URLs).
+  try{
+    const li = STATE.last_inputs;
+    const apUrl = $("#apUrl");
+    if(li && li.urls && li.urls.length && apUrl){
+      if(li.type==="upload"){
+        // Can't restore the actual file (browsers don't persist file
+        // inputs), but the cached analysis drives resume. Surface a small
+        // note next to the URL input so the user knows what's stored.
+        AP_SAMPLE_URL = li.urls[0];
+        apUrl.value = "";
+        apUrl.placeholder = `📁 ${(li.upload_name||"sample video").split(/[\\/]/).pop()} (upload cached)`;
+        const noteId = "apStoredNote";
+        let note = $("#"+noteId);
+        if(!note){
+          note = document.createElement("div");
+          note.id = noteId;
+          note.style.cssText = "font-size:11px;color:var(--muted);margin-top:6px;padding:6px 10px;background:rgba(229,72,77,.08);border-radius:6px;border:1px solid rgba(229,72,77,.18)";
+          const apWrap = apUrl.closest(".inputWrap,div,section") || apUrl.parentElement;
+          if(apWrap) apWrap.appendChild(note);
+        }
+        const nm = (li.upload_name||"sample video").split(/[\\/]/).pop();
+        note.innerHTML = `📁 Previous source: uploaded sample (<b>${_esc(nm)||"upload"}</b>) — click ▶ Resume to continue from cached analysis. The original file isn't re-uploaded automatically; the cached style + analysis is reused.`;
+      } else {
+        apUrl.value = li.urls.join("\n");
+        AP_SAMPLE_URL = "";
+        const note = $("#apStoredNote"); if(note) note.remove();
+      }
+    } else {
+      // No last_inputs — fresh project, make sure textbox is clean.
+      if(apUrl) apUrl.value = "";
+      AP_SAMPLE_URL = "";
+      const note = $("#apStoredNote"); if(note) note.remove();
+    }
+  }catch(_){}
   const ytaTa = $("#ytaUrls"); if(ytaTa){ if(!ytaTa.dataset.bound){ ytaTa.addEventListener("input", _ytaCount); ytaTa.dataset.bound="1"; } _ytaCount(); }
   const bp=$("#batchPrompts"); if(bp && !bp.dataset.bound){ bp.addEventListener("input", updateCost); bp.dataset.bound="1"; }
   const oq=$("#optQuality"); if(oq && !oq.dataset.bound){ oq.addEventListener("change", updateCost); oq.dataset.bound="1"; }
