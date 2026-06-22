@@ -21,6 +21,61 @@ import threading
 import time
 
 
+def _fix_stdio():
+    """PyInstaller-built GUI apps (console=False) have sys.stdout/stderr set
+    to None. Uvicorn's default formatter calls ``sys.stdout.isatty()`` during
+    logging configuration and crashes with
+    ``AttributeError: 'NoneType' object has no attribute 'isatty'``.
+
+    Re-bind them to a real writable stream (a log file + a teed mirror) so
+    uvicorn + everything that touches ``sys.stdout`` works as in a console
+    build.  We also keep a copy in app.log so a frozen user can ask for
+    support without losing startup output.
+    """
+    if sys.stdout is not None and sys.stderr is not None:
+        return  # already real streams (dev / console build)
+
+    state = os.environ.get("CS_CONFIG_DIR") or os.environ.get(
+        "LOCALAPPDATA", os.path.expanduser("~"))
+    log_dir = os.path.join(state, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "app.log")
+
+    class _Tee:
+        """Write to two file streams. isatty() always returns False so
+        uvicorn / other libs never try to call tty-only methods."""
+        def __init__(self, *streams):
+            self._streams = streams
+        def write(self, s):
+            for st in self._streams:
+                try:
+                    st.write(s)
+                    st.flush()
+                except Exception:
+                    pass
+        def flush(self):
+            for st in self._streams:
+                try:
+                    st.flush()
+                except Exception:
+                    pass
+        def isatty(self):
+            return False
+        def close(self):
+            for st in self._streams:
+                try:
+                    st.close()
+                except Exception:
+                    pass
+
+    devnull = open(os.devnull, "w")
+    log_file = open(log_path, "a", encoding="utf-8", errors="replace")
+    log_file.write(f"\n--- launch {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+    log_file.flush()
+    sys.stdout = _Tee(devnull, log_file)
+    sys.stderr = _Tee(devnull, log_file)
+
+
 def _app_root():
     """Directory that holds bundled read-only resources (static/, ffmpeg/)."""
     if getattr(sys, "frozen", False):
@@ -127,6 +182,7 @@ def _show_error(title, message):
 
 
 def main():
+    _fix_stdio()           # MUST run before any uvicorn import / app launch
     _prepare_env()
     port = _free_port(8000)
     url = f"http://127.0.0.1:{port}/"
