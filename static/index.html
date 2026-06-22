@@ -6168,17 +6168,27 @@ async function runFromSample(){
     const r=await fetch("/api/autopilot/from-upload",{method:"POST",body:fd});
     if(!r.ok){ const t=await r.text(); throw new Error(t||("HTTP "+r.status)); }
     const d=await r.json();
-    AP_SAMPLE_URL=d.url;  // upload://<name> sentinel
+    AP_SAMPLE_URL=d.url;  // upload://<name> sentinel — keep set until a pick runs
     nm.textContent=`✓ Deconstructed — ${(d.suggestions||[]).length} angles, style: ${(d.style_summary||"").slice(0,60)}…`;
-    toast("Sample deconstructed — generating video in its style","ok");
-    // Kick off the full autopilot using the top suggestion, staged analysis.
-    await runAutopilot(0, true, false);
+    // Show the SAME 10-topic picker the YouTube path uses — let the user choose
+    // an angle instead of auto-picking #0. The staged upload:// analysis is
+    // reused by runAutopilot via AP_SAMPLE_URL (set above, persists until pick).
+    AP_TOPICS=d.suggestions||[]; AP_TOPICS_URL=AP_SAMPLE_URL;
+    renderTopics();
+    if(AP_TOPICS.length){
+      toast(`Sample deconstructed — ${AP_TOPICS.length} angles in its style, pick one`,"ok");
+      try{ $("#apTopics")?.scrollIntoView({behavior:"smooth",block:"nearest"}); }catch(_){}
+    } else {
+      // No suggestions came back — fall back to auto-run on the staged analysis.
+      toast("Sample deconstructed — generating video in its style","ok");
+      await runAutopilot(0, true, false);
+    }
   }catch(e){
     toast(e.message,"err");
     nm.textContent="Failed: "+e.message;
+    AP_SAMPLE_URL="";  // clear on failure so later YT runs aren't hijacked
   }finally{
     busy(b,false);
-    AP_SAMPLE_URL="";  // clear so subsequent YT runs aren't hijacked
   }
 }
 async function runAutopilot(idx=0, fromCache=false, resume=false){
@@ -6314,7 +6324,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
       `</div>`;
     if(_isNet) _failHtml+=`<div style="font-size:12px;color:var(--muted);margin-top:6px">Your script, characters and rendered frames are saved. Continue resumes only the missing steps.</div>`;
     $("#apResult").innerHTML=_failHtml;
-  }finally{ busy(b,false); $("#apStopBtn").style.display="none"; $("#apRegenBtn").style.display="inline-flex"; AP_RUN_ID=null; }
+  }finally{ busy(b,false); $("#apStopBtn").style.display="none"; $("#apRegenBtn").style.display="inline-flex"; AP_RUN_ID=null; AP_SAMPLE_URL=""; }
 }
 
 // ── CONTINUE an interrupted run ─────────────────────────────────────────────
