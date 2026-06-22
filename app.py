@@ -6722,6 +6722,12 @@ def _autopilot_analyze_upload(video_path, nudge, model, request,
                      "frames": frame_urls, "source": "upload"}],
         "errors": [], "created": store.now(),
         "from_upload": True, "transcript": transcript[:4000],
+        # Persist the saved upload's disk path so RESUME can re-reference the
+        # ACTUAL source video (re-extract frames / re-transcribe) instead of
+        # only relying on the cached frame URLs. Orphan-proof: the file lives
+        # in data/uploads/ and survives server restarts + reloads.
+        "upload_path": os.path.abspath(video_path),
+        "upload_name": source_name or os.path.basename(video_path),
     }
     st = store.load_state()
     st["yt_inspiration"] = insp
@@ -6962,6 +6968,7 @@ def api_autopilot(body: AutopilotIn, request: Request):
                                 or (urls[0].replace("upload://", "")
                                     if urls and urls[0].startswith("upload://")
                                     else "")),
+                "upload_path": (cached.get("upload_path") or ""),
                 "captured_at": time.time(),
             }
             store.save_state(_li_st)
