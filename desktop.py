@@ -93,6 +93,15 @@ def _wait_ready(url, timeout=40.0):
     return False
 
 
+def _show_error(title, message):
+    """Last-resort user-visible error when the GUI window can't open."""
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(0, message, title, 0x10)  # MB_ICONERROR
+    except Exception:
+        print(f"[{title}] {message}", file=sys.stderr)
+
+
 def main():
     _prepare_env()
     port = _free_port(8000)
@@ -101,36 +110,71 @@ def main():
     t = threading.Thread(target=_run_server, args=(port,), daemon=True)
     t.start()
 
-    _wait_ready(url, timeout=45)
+    if not _wait_ready(url, timeout=45):
+        _show_error(
+            "Continuity Studio",
+            f"The internal server didn't start in time on {url}.\n"
+            "Please relaunch, or check Settings → reset the vault.\n"
+            "Logs: %LOCALAPPDATA%\\ContinuityStudio\\logs\\",
+        )
+        return
 
-    # Preferred: native desktop window via pywebview.
+    # Preferred: native desktop window via pywebview. Try the modern
+    # EdgeChromium backend first (uses the WebView2 runtime you already have
+    # for Edge); fall back to older backends; finally to the system browser if
+    # no GUI backend works on this machine.
     try:
         import webview
-        webview.create_window(
-            "Continuity Studio",
-            url,
-            width=1480,
-            height=940,
-            min_size=(1024, 680),
-            confirm_close=False,
-        )
-        webview.start()  # blocks until the window is closed
+        # Try EdgeChromium explicitly (skips WinForms/IE-mode which is broken
+        # on many current Edge configs).
+        gui = None
+        for backend in ("edgechromium", "mshtml", "winforms", None):
+            try:
+                kwargs = {"title": "Continuity Studio",
+                          "url": url,
+                          "width": 1480,
+                          "height": 940,
+                          "min_size": (1024, 680),
+                          "confirm_close": False}
+                if backend:
+                    kwargs["gui"] = backend
+                webview.create_window(**kwargs)
+                webview.start()
+                gui = backend or "default"
+                break
+            except Exception as be:
+                last_err = be
+                continue
+        if gui is None:
+            raise RuntimeError(f"no working pywebview backend: {last_err!r}")
         return
-    except Exception:
-        pass
-
-    # Fallback: open in the system default browser and keep the server alive.
-    try:
-        import webbrowser
-        webbrowser.open(url)
-    except Exception:
-        pass
-    print(f"Continuity Studio running at {url}  (close this window to quit)")
-    try:
-        while True:
-            time.sleep(3600)
-    except KeyboardInterrupt:
-        pass
+    except Exception as e:
+        # Windowless / install error: fall back to the system browser so the
+        # user can still use the app, AND pop a clear message so they know
+        # WHY the native window didn't open (most often: WebView2 runtime
+        # missing on a clean Windows install).
+        try:
+            import webbrowser
+            webbrowser.open(url)
+        except Exception:
+            pass
+        _show_error(
+            "Continuity Studio — opened in browser",
+            "The native desktop window couldn't open (most often: the WebView2 "
+            "runtime is missing).\n\n"
+            "The app is running at:\n"
+            f"  {url}\n\n"
+            "It opened in your default browser so you can still use it.\n\n"
+            "To get the native window, install the WebView2 runtime "
+            "(Microsoft Edge installs it automatically, or grab the "
+            "Evergreen Standalone Installer from Microsoft).\n\n"
+            f"Details: {e!r}",
+        )
+        try:
+            while True:
+                time.sleep(3600)
+        except KeyboardInterrupt:
+            pass
 
 
 if __name__ == "__main__":
