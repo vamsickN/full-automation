@@ -203,10 +203,18 @@ SUPPORTED_QUALITIES = ["low", "medium", "high", "auto"]
 
 # How many source-video style frames to feed as art-style anchors. Character
 # sheets and scene frames both pull up to this many "STYLE REF" images from the
-# pinned style_frames. 4-5 gives the model a fuller read of the source look
-# (palette, line weight, lighting variation) without overcrowding the contact
-# sheet. Raise via STYLE_REF_COUNT in .env.
-STYLE_REF_COUNT = int(_get("STYLE_REF_COUNT", "5"))
+# pinned style_frames. More frames = a fuller read of the source look (palette,
+# line weight, lighting variation, character design). Raise via STYLE_REF_COUNT
+# in .env. gpt-image-2 handles 6-8 refs well; the contact-sheet fallback packs
+# them into one grid so there's no hard wire-format cap.
+STYLE_REF_COUNT = int(_get("STYLE_REF_COUNT", "6"))
+
+# Hard ceiling on how many reference images go into a SINGLE image-edit call
+# (style frames + character sheets + previous frame, combined). Anchors the
+# upper bound so we never overflow the model/proxy. gpt-image-2 / derouter
+# accept many via repeated image[] fields; the OpenRouter fallback and the
+# contact-sheet compositor both honour this. Raise via MAX_REF_IMAGES in .env.
+MAX_REF_IMAGES = int(_get("MAX_REF_IMAGES", "10"))
 
 AUTH_REQUIRED = _get("AUTH_REQUIRED", "false").lower() in ("1", "true", "yes")
 SESSION_SECRET = _get("SESSION_SECRET", "continuity-studio-default-session-key")

@@ -597,7 +597,7 @@ class OpenRouterImageClient:
         size = size or config.DEFAULT_SIZE
         sized_prompt = prompt + self._size_instruction(size)
         content_parts = []
-        for img_bytes in images[:4]:
+        for img_bytes in images[:max(1, int(getattr(config, "MAX_REF_IMAGES", 10)))]:
             compressed, mime = self._compress_ref(img_bytes)
             b64 = base64.b64encode(compressed).decode()
             content_parts.append({

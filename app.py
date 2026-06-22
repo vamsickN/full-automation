@@ -1298,6 +1298,21 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
         except Exception:
             micro_cut = False
 
+    # Hard ceiling: never send more than MAX_REF_IMAGES into one edit call.
+    # Style anchors lead the list, so if we must trim we drop the LAST style
+    # anchors first while always keeping the character sheet(s) and (if present)
+    # the previous-frame continuity ref — those are load-bearing for identity
+    # and continuity, whereas extra style anchors are diminishing returns.
+    _max_refs = max(1, int(getattr(config, "MAX_REF_IMAGES", 10)))
+    if len(refs) > _max_refs:
+        _style_idx = [i for i, m in enumerate(ref_meta) if m.get("type") == "style"]
+        _overflow = len(refs) - _max_refs
+        _drop = set(_style_idx[-_overflow:]) if _overflow <= len(_style_idx) else set(_style_idx)
+        _kept = [i for i in range(len(ref_meta)) if i not in _drop][:_max_refs]
+        refs = [refs[i] for i in _kept]
+        ref_meta = [ref_meta[i] for i in _kept]
+        print(f"[render] trimmed refs to {len(refs)} (cap={_max_refs})", flush=True)
+
     # Decide ref delivery mode up front: separate images vs one contact sheet.
     _multi = (request.state.settings["multi_image_edit"]
               if request else config.MULTI_IMAGE_EDIT)
@@ -2128,7 +2143,11 @@ def _deep_analyze_urls(urls, nudge, model, request, n_suggestions=10):
     no readable videos / analysis failure."""
     import youtube
     urls = list(urls)[:10]   # bound the job — Anthropic caps a request near 20 images
-    per_video = max(3, min(8, 16 // max(1, len(urls))))
+    # Pull MORE frames per video so the style read + anchor selection is richer.
+    # Single video -> up to 12 frames; many videos -> fewer each to stay under
+    # the vision-model image cap. The pooled set feeds both Claude's style
+    # deconstruction AND the pinned style anchors.
+    per_video = max(4, min(12, 18 // max(1, len(urls))))
     sources, frame_imgs, src_meta, errors, pooled_frames = [], [], [], [], []
     for u in urls:
         try:
@@ -2158,7 +2177,7 @@ def _deep_analyze_urls(urls, nudge, model, request, n_suggestions=10):
     if not sources:
         raise HTTPException(400, "Couldn't read any of those videos. Try links "
                                  "with captions or that aren't region-locked.")
-    frame_imgs = frame_imgs[:16]
+    frame_imgs = frame_imgs[:18]
 
     st = store.load_state()
     client = _claude_client_for(model, request)
@@ -6394,6 +6413,151 @@ def _autopilot_analyze(urls, nudge, model, request, n_suggestions=10, constraint
     return insp
 
 
+def _autopilot_analyze_upload(video_path, nudge, model, request,
+                              n_suggestions=10, constraints=None,
+                              source_name=""):
+    """Autopilot from an UPLOADED sample video file (no YouTube). Extract frames
+    + transcribe the audio locally, then run the SAME Claude deconstruction
+    (art style / pacing / way-of-speaking / storytelling) the YouTube path uses,
+    so the generated video copies the sample's script style AND art style.
+    Saved as yt_inspiration with an `upload://` sentinel url so the rest of the
+    autopilot pipeline (from_cache, resume) treats it like any other source."""
+    import video as videomod
+    # 1. Extract a generous frame set so the style read + anchors are rich.
+    _max_f = max(8, int(config.STYLE_REF_COUNT) * 3)
+    try:
+        frame_urls = videomod.extract_frames(video_path, fps=1.0, max_frames=_max_f)
+    except Exception as e:
+        raise HTTPException(500, f"frame extraction failed: {e}")
+    if not frame_urls:
+        raise HTTPException(400, "No frames could be extracted from that video.")
+
+    # 2. Transcribe the audio locally (faster-whisper) -> script/way-of-speaking.
+    transcript = ""
+    try:
+        import transcribe as transmod
+        _tr = transmod.transcribe_audio(video_path,
+                                        settings=getattr(request.state, "settings", {}),
+                                        engine="local")
+        transcript = (_tr.get("text") or "").strip() if isinstance(_tr, dict) else ""
+    except Exception as te:
+        print(f"[autopilot-upload] transcription skipped ({te}) — "
+              "analysing visuals only", flush=True)
+
+    # 3. Downsize frames for the vision call (cap at the vision pool size).
+    frame_imgs = []
+    for u in frame_urls[:18]:
+        try:
+            frame_imgs.append(pipeline.downsize_for_vision(store.read_image(u)))
+        except Exception:
+            pass
+    if not frame_imgs:
+        raise HTTPException(500, "Couldn't read the extracted frames for analysis.")
+
+    # 4. Same multi-frame deconstruction the YouTube path uses.
+    nudge = (nudge or "") + _topic_constraint_nudge(constraints)
+    st = store.load_state()
+    client = _claude_client_for(model, request)
+    sources = [{"title": source_name or "Uploaded sample video",
+                "channel": "", "transcript": transcript}]
+
+    def _ask(extra=""):
+        raw = client.suggest_from_references(
+            frames=frame_imgs, sources=sources,
+            nudge=(nudge + extra).strip(),
+            master_prompt=st["master_prompt"], n_suggestions=n_suggestions)
+        return _as_analysis_dict(extract_json(raw))
+
+    try:
+        data = _ask()
+        sugs = _normalize_suggestions(data.get("suggestions"))
+        if _suggestions_need_fix(sugs):
+            data2 = _ask(
+                "\n\nCRITICAL OUTPUT RULE: every item in \"suggestions\" MUST use "
+                "these EXACT key names — title, logline, hook, distinct_angle, "
+                "virality_score (INTEGER 1-100), virality_reason, voiceover_style, "
+                "image_prompt_style, pacing_seconds, total_duration, scene_count. "
+                "Sort most-viral first.")
+            sugs2 = _normalize_suggestions(data2.get("suggestions"))
+            if not _suggestions_need_fix(sugs2) or len(sugs2) > len(sugs):
+                data, sugs = data2, sugs2
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"analysis failed: {e}")
+
+    if not sugs:
+        sugs = _fallback_suggestions(sources, n_suggestions)
+    suggestions = _apply_topic_constraints(
+        _sort_by_virality(_ensure_virality(sugs)), constraints)
+    if not suggestions:
+        raise HTTPException(500, "Analysis returned no suggestions.")
+
+    art_style = data.get("art_style", "") or data.get("style_summary", "")
+    sentinel = "upload://" + (source_name or os.path.basename(video_path))
+    insp = {
+        "url": sentinel, "video_id": "", "title": source_name or "Uploaded video",
+        "channel": "", "style_summary": art_style,
+        "speech_style": data.get("speech_style", ""),
+        "topic": data.get("sources_summary", ""),
+        "frames": frame_urls, "suggestions": suggestions,
+        "input_urls": [sentinel], "urls": [sentinel],
+        "art_style": art_style, "pacing": data.get("pacing", ""),
+        "storytelling": data.get("storytelling", ""),
+        "sources_summary": data.get("sources_summary", ""),
+        "sources": [{"url": sentinel, "title": source_name or "Uploaded video",
+                     "frames": frame_urls, "source": "upload"}],
+        "errors": [], "created": store.now(),
+        "from_upload": True, "transcript": transcript[:4000],
+    }
+    st = store.load_state()
+    st["yt_inspiration"] = insp
+    store.save_state(st)
+    store.log_usage("script", 1, 0.01)
+    return insp
+
+
+@app.post("/api/autopilot/from-upload")
+async def api_autopilot_from_upload(
+    request: Request,
+    file: UploadFile = File(...),
+    nudge: str = Form(""),
+    model: Optional[str] = Form(None),
+    target_seconds: Optional[float] = Form(None),
+    pacing_seconds: Optional[float] = Form(None),
+    num_characters: Optional[int] = Form(None),
+    orientation: Optional[str] = Form(None),
+    n_suggestions: int = Form(10),
+):
+    """Deconstruct an UPLOADED sample video and stage it for autopilot. Returns
+    the analysis (suggestions + style). The client then calls /api/autopilot with
+    from_cache=true and url='upload://<name>' to generate the copy-style video."""
+    if not _has_ai_key(request.state.settings):
+        raise HTTPException(400, "No AI key set — add Claude or OpenAI key in Settings.")
+    _fn = os.path.basename((file.filename or "sample.mp4").replace("..", ""))
+    dest = os.path.join(store.UPLOADS_DIR, store.new_id("sample") + "_" + _fn)
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file — upload a real video.")
+    os.makedirs(store.UPLOADS_DIR, exist_ok=True)
+    with open(dest, "wb") as f:
+        f.write(data)
+    constraints = {"target_seconds": target_seconds, "pacing_seconds": pacing_seconds,
+                   "num_characters": num_characters, "orientation": orientation}
+    insp = _autopilot_analyze_upload(
+        dest, nudge, model, request, n_suggestions=n_suggestions,
+        constraints=constraints, source_name=_fn)
+    return {
+        "ok": True,
+        "url": insp["url"],                # sentinel to pass to /api/autopilot
+        "style_summary": insp.get("style_summary", ""),
+        "speech_style": insp.get("speech_style", ""),
+        "suggestions": insp.get("suggestions", []),
+        "frames": insp.get("frames", []),
+        "transcript_chars": len(insp.get("transcript", "")),
+    }
+
+
 class AutopilotSuggestIn(BaseModel):
     url: str = ""                      # legacy single-link
     urls: List[str] = []               # one OR MANY YouTube URLs (preferred)
@@ -6510,11 +6674,22 @@ def api_autopilot(body: AutopilotIn, request: Request):
     # otherwise analyse fresh. Either way they're ranked by virality.
     _ap_prog(run_id, step="analyse")
     urls = _autopilot_urls(body)
-    if not urls:
-        raise HTTPException(400, "Paste at least one YouTube link.")
+    # Uploaded-sample-video path: the analysis was already done by
+    # /api/autopilot/from-upload and stored in yt_inspiration with an
+    # `upload://` sentinel url. There's no YouTube link to (re)analyse, so we
+    # always use the cached inspiration for these.
+    _is_upload = any(str(u).startswith("upload://") for u in urls)
     cached = (store.load_state().get("yt_inspiration") or {})
-    use_cache = (body.from_cache and cached.get("suggestions")
-                 and (cached.get("input_urls") or [cached.get("url")]) == urls)
+    if _is_upload:
+        if not cached.get("suggestions"):
+            raise HTTPException(400, "Upload analysis missing — upload the sample "
+                                     "video again to deconstruct it first.")
+        use_cache = True
+    else:
+        if not urls:
+            raise HTTPException(400, "Paste at least one YouTube link.")
+        use_cache = (body.from_cache and cached.get("suggestions")
+                     and (cached.get("input_urls") or [cached.get("url")]) == urls)
     insp = cached if use_cache else _autopilot_analyze(
         urls, body.nudge, body.model, request, 10,
         constraints={"target_seconds": body.target_seconds,
@@ -6542,10 +6717,13 @@ def api_autopilot(body: AutopilotIn, request: Request):
         print("[autopilot] keep_style: existing style anchors + notes preserved",
               flush=True)
     elif ref_frame_urls:
-        # Pin 4 evenly-spaced frames from the uploaded reference video(s) as the
-        # style anchors that every generated frame must copy the look of.
-        step = max(1, len(ref_frame_urls) // 4)
-        _style_picks = ref_frame_urls[::step][:4]
+        # Pin STYLE_REF_COUNT evenly-spaced frames from the uploaded reference
+        # video(s) as the style anchors that every generated frame must copy the
+        # look of. More anchors = a fuller, more faithful read of the source art
+        # style (palette, line weight, lighting, character design variation).
+        _n_anchors = max(1, int(config.STYLE_REF_COUNT))
+        step = max(1, len(ref_frame_urls) // _n_anchors)
+        _style_picks = ref_frame_urls[::step][:_n_anchors]
         with _state_write_lock:
             _sf_st = store.load_state()
             _sf_st["style_frames"] = [{"id": store.new_id("sf"), "url": u}

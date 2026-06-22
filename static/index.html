@@ -1363,6 +1363,13 @@
             <button class="btn outline" id="apRegenBtn" onclick="regenAutopilot()" style="white-space:nowrap; display:none">↻ Regenerate</button>
           </div>
           <div id="apContinueBanner" style="display:none; align-items:center; gap:8px; margin-top:10px; padding:10px 12px; background:rgba(255,180,40,.10); border:1px solid rgba(255,180,40,.35); border-radius:8px; font-size:13px; color:var(--amber)"></div>
+          <div class="row" style="gap:10px; align-items:center; flex-wrap:wrap; margin-top:8px; padding:10px 12px; background:rgba(70,200,180,.07); border:1px dashed rgba(70,200,180,.35); border-radius:8px">
+            <span style="font-size:13px; color:var(--teal)"><strong>OR upload a sample video</strong> — copies its exact script style + art style:</span>
+            <input type="file" id="apSampleFile" accept="video/*" style="display:none" onchange="apSamplePicked(this)"/>
+            <button class="btn outline" id="apSampleBtn" onclick="document.getElementById('apSampleFile').click()" style="white-space:nowrap">📹 Choose sample video</button>
+            <button class="btn glow btn-primary" id="apSampleGoBtn" onclick="runFromSample()" style="white-space:nowrap; display:none">🚀 Make video from sample</button>
+            <span id="apSampleName" style="font-size:12px; color:var(--muted)"></span>
+          </div>
           <div class="row" style="gap:10px; align-items:end; flex-wrap:wrap; margin-top:8px">
             <div style="min-width:140px">
               <label class="label" style="margin:0 0 4px">Video length (sec)</label>
@@ -6130,8 +6137,54 @@ async function findTopics(){
   finally{ busy(b,false); }
 }
 function regenAutopilot(){ runAutopilot(AP_LAST.idx, AP_LAST.fromCache); }
+// When set (by runFromSample), autopilot uses this sentinel url instead of the
+// YouTube-link textarea — the analysis is already staged server-side.
+let AP_SAMPLE_URL="";
+let AP_SAMPLE_FILE=null;
+function apSamplePicked(input){
+  const f=input&&input.files&&input.files[0];
+  AP_SAMPLE_FILE=f||null;
+  const nm=$("#apSampleName"), go=$("#apSampleGoBtn");
+  if(f){
+    nm.textContent=`${f.name} (${(f.size/1048576).toFixed(1)} MB)`;
+    if(go) go.style.display="inline-flex";
+  } else { nm.textContent=""; if(go) go.style.display="none"; }
+}
+// Upload a sample video -> server deconstructs script style + art style -> then
+// run the normal autopilot against the staged analysis (copies the sample).
+async function runFromSample(){
+  if(!AP_SAMPLE_FILE){ toast("Choose a sample video first","err"); return; }
+  if(!hasImageKey()||!CFG.has_claude_key||!CFG.has_voice_key){ toast("Set all 3 API keys (image, Claude, voice) in Settings first","err"); openSettings(); return; }
+  const b=$("#apSampleGoBtn"); busy(b,true,"Analysing sample…");
+  const nm=$("#apSampleName"); nm.textContent="⏳ extracting frames + transcribing audio + deconstructing style…";
+  try{
+    const fd=new FormData();
+    fd.append("file", AP_SAMPLE_FILE);
+    fd.append("nudge", (($("#apNudge")||{}).value||""));
+    const _ts=parseFloat(($("#apLength")||{}).value); if(!isNaN(_ts)&&_ts>0) fd.append("target_seconds", _ts);
+    const _pc=parseFloat(($("#apPacing")||{}).value); if(!isNaN(_pc)&&_pc>0) fd.append("pacing_seconds", _pc);
+    const _or=($("#apOrient")||{}).value; if(_or) fd.append("orientation", _or);
+    // multipart: don't set Content-Type, the browser adds the boundary
+    const r=await fetch("/api/autopilot/from-upload",{method:"POST",body:fd});
+    if(!r.ok){ const t=await r.text(); throw new Error(t||("HTTP "+r.status)); }
+    const d=await r.json();
+    AP_SAMPLE_URL=d.url;  // upload://<name> sentinel
+    nm.textContent=`✓ Deconstructed — ${(d.suggestions||[]).length} angles, style: ${(d.style_summary||"").slice(0,60)}…`;
+    toast("Sample deconstructed — generating video in its style","ok");
+    // Kick off the full autopilot using the top suggestion, staged analysis.
+    await runAutopilot(0, true, false);
+  }catch(e){
+    toast(e.message,"err");
+    nm.textContent="Failed: "+e.message;
+  }finally{
+    busy(b,false);
+    AP_SAMPLE_URL="";  // clear so subsequent YT runs aren't hijacked
+  }
+}
 async function runAutopilot(idx=0, fromCache=false, resume=false){
-  const urls=_apUrls(); if(!urls.length){toast("Paste at least one YouTube link","err");return;}
+  // Sample-video path: use the staged upload:// sentinel instead of YT links.
+  const urls = AP_SAMPLE_URL ? [AP_SAMPLE_URL] : _apUrls();
+  if(!urls.length){toast("Paste at least one YouTube link or upload a sample video","err");return;}
   const url=urls[0];
   if(!hasImageKey()||!CFG.has_claude_key||!CFG.has_voice_key){ toast("Set all 3 API keys (image, Claude, and a voice provider — ElevenLabs or MiMo) in Settings first","err"); openSettings(); return; }
   // a cached pick is only valid for the exact set of URLs we analysed
