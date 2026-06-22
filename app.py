@@ -6041,6 +6041,10 @@ class AutopilotIn(BaseModel):
     cut_clicks: bool = True            # ElevenLabs click on every frame change
     cut_click_volume: float = 0.30
     cut_click_style: str = "click"     # click | camera | whoosh | pop | tick
+    resume: bool = False               # CONTINUE an interrupted run: reuse the
+                                       # script/characters/frames/video already
+                                       # on disk and only do the missing steps,
+                                       # instead of regenerating from scratch.
 
 
 # --- Autopilot run control: stop flag + per-step deadline ------------------- #
@@ -6128,6 +6132,79 @@ def _ap_prog(run_id, **kw):
         if "step" in kw:
             kw["step_index"] = AP_STEPS.index(kw["step"]) if kw["step"] in AP_STEPS else p["step_index"]
         p.update(kw)
+        snap = dict(p)
+    # Persist a lightweight breadcrumb to the project state on disk so an
+    # interrupted run (network drop / server restart / closed tab) can be
+    # discovered and CONTINUED later, even though the live in-memory progress
+    # dict is gone. Only the small status fields are stored — never media.
+    try:
+        with _state_write_lock:
+            _st = store.load_state()
+            _st["autopilot_run"] = {
+                "run_id": snap.get("run_id"),
+                "step": snap.get("step"),
+                "step_index": snap.get("step_index", 0),
+                "done": bool(snap.get("done")),
+                "chars_done": snap.get("chars_done", 0),
+                "chars_total": snap.get("chars_total", 0),
+                "frames_done": snap.get("frames_done", 0),
+                "frames_total": snap.get("frames_total", 0),
+                "video_url": snap.get("video_url"),
+                "updated": time.time(),
+            }
+            store.save_state(_st)
+    except Exception:
+        pass
+
+
+def _autopilot_disk_status():
+    """Inspect persisted state and report which autopilot steps already have
+    output on disk. Drives the Continue button + the resume skip-logic."""
+    try:
+        st = store.load_state()
+    except Exception:
+        return {"incomplete": False}
+    run = st.get("autopilot_run") or {}
+    script = st.get("script") or {}
+    scenes = script.get("scenes") or []
+    chars = [c for c in (st.get("characters") or []) if c.get("sheet_url")]
+    frames = st.get("sequence") or []
+    has_script = bool(scenes)
+    has_chars = bool(chars)
+    has_frames = bool(frames)
+    has_video = bool((st.get("voiceover") or {}).get("url")) and has_frames
+    has_seo = bool(st.get("seo"))
+    # A run is "incomplete / continuable" when SOME work exists but the final
+    # video is missing. If the video already exists, the project is complete —
+    # don't nag with a Continue button (covers pre-existing finished projects
+    # that predate the breadcrumb). Only an explicit not-done breadcrumb with a
+    # missing video marks it continuable.
+    done_flag = bool(run.get("done"))
+    has_breadcrumb = bool(run.get("run_id"))
+    if has_video:
+        incomplete = has_breadcrumb and not done_flag
+    else:
+        incomplete = has_script or has_chars or has_frames
+    return {
+        "incomplete": incomplete,
+        "run_id": run.get("run_id"),
+        "last_step": run.get("step"),
+        "updated": run.get("updated"),
+        "has_script": has_script, "scenes": len(scenes),
+        "has_characters": has_chars, "characters": len(chars),
+        "has_frames": has_frames, "frames": len(frames),
+        "has_video": has_video,
+        "has_seo": has_seo,
+        "done": done_flag,
+    }
+
+
+@app.get("/api/autopilot/last")
+def api_autopilot_last():
+    """Report whether the current project has an interrupted autopilot run that
+    can be CONTINUED, and what's already been generated. The UI uses this on
+    page-load (and after a network error) to show a ▶ Continue button."""
+    return _autopilot_disk_status()
 
 
 @app.get("/api/autopilot/progress/{run_id}")
@@ -6388,6 +6465,21 @@ def api_autopilot(body: AutopilotIn, request: Request):
         raise HTTPException(400, "No voice/TTS key — add ElevenLabs or MiMo in Settings.")
 
     run_id = body.run_id or store.new_id("run")
+    # ── RESUME / CONTINUE an interrupted run ───────────────────────────────
+    # When resuming we must NOT wipe prior work and MUST reuse what's on disk:
+    #   fresh=False     -> don't delete the frames/chars/video already rendered
+    #   from_cache=True -> reuse the topic list so suggestion_index still lines up
+    #   keep_style=True -> keep the pinned style anchors + notes from the 1st run
+    # Per-step skip flags are computed from the persisted state below.
+    _resume = bool(body.resume)
+    _disk = _autopilot_disk_status() if _resume else {}
+    if _resume:
+        body.fresh = False
+        body.from_cache = True
+        body.keep_style = True
+        if not body.run_id and _disk.get("run_id"):
+            run_id = _disk["run_id"]
+        print(f"[autopilot] RESUME run_id={run_id} disk={_disk}", flush=True)
     print(f"[autopilot] START target_seconds={body.target_seconds!r} "
           f"pacing_seconds={body.pacing_seconds!r} "
           f"num_characters={body.num_characters!r} "
@@ -6543,37 +6635,26 @@ def api_autopilot(body: AutopilotIn, request: Request):
     print(f"[autopilot] target: {expected_scenes} frames "
           f"({total_dur}s ÷ {pacing}s/frame)", flush=True)
 
+    # ── RESUME: reuse the script already on disk, skip (re)generation ───────
+    _reuse_script = False
+    if _resume:
+        _disk_script = (store.load_state().get("script") or {})
+        if (_disk_script.get("scenes") or []):
+            script = _disk_script
+            _reuse_script = True
+            print(f"[autopilot] RESUME: reusing saved script "
+                  f"({len(script.get('scenes') or [])} scenes) — skipping "
+                  f"script generation", flush=True)
+            steps.append({"step": "script", "reused": True,
+                          "scenes": len(script.get("scenes") or []),
+                          "characters": len(script.get("characters") or [])})
+
     # ── Script generation (attempt 1) ──────────────────────────────────────
-    try:
-        script = _generate_script_validated(
-            claude,
-            title=title, description=desc,
-            total_duration=max(1.0, total_dur),
-            pacing_seconds=max(0.1, pacing),
-            num_characters=num_chars,
-            style_notes=style_notes,
-            master_prompt=st["master_prompt"],
-            dynamic=body.dynamic,
-        )
-    except Exception as e:
-        raise HTTPException(500, f"Script generation failed: {e}")
-
-    _pre_actual = len(script.get("scenes") or [])
-    print(f"[autopilot] script attempt 1: {_pre_actual}/{expected_scenes} scenes",
-          flush=True)
-
-    # ── Retry if Claude badly undershoots (<60 %) ──────────────────────────
-    if _pre_actual < expected_scenes * 0.6 and expected_scenes > 4:
+    if not _reuse_script:
         try:
-            raw2 = claude.generate_script(
-                title=title,
-                description=(
-                    desc + f"\n\nCRITICAL: This is a FAST-CUT video that needs "
-                    f"EXACTLY {expected_scenes} scenes. The previous attempt only had "
-                    f"{_pre_actual} scenes — that is NOT acceptable. Write all "
-                    f"{expected_scenes} unique visual moments now, numbered 1 to "
-                    f"{expected_scenes}. Do not stop early."
-                ),
+            script = _generate_script_validated(
+                claude,
+                title=title, description=desc,
                 total_duration=max(1.0, total_dur),
                 pacing_seconds=max(0.1, pacing),
                 num_characters=num_chars,
@@ -6581,78 +6662,104 @@ def api_autopilot(body: AutopilotIn, request: Request):
                 master_prompt=st["master_prompt"],
                 dynamic=body.dynamic,
             )
-            script2 = extract_json(raw2)
-            if len(script2.get("scenes") or []) > _pre_actual:
-                script = script2
-                print(f"[autopilot] retry improved: "
-                      f"{len(script.get('scenes',[]))} scenes", flush=True)
-        except Exception:
-            pass
+        except Exception as e:
+            raise HTTPException(500, f"Script generation failed: {e}")
 
-    # ── Fill remaining missing scenes with unique Claude-generated prompts ──
-    # This replaces the mechanical camera-angle split: Claude writes genuinely
-    # different visual moments for every missing slot.
-    _actual_now = len(script.get("scenes") or [])
-    if _actual_now < expected_scenes:
-        _missing = expected_scenes - _actual_now
-        print(f"[autopilot] filling {_missing} missing scenes via Claude",
+        _pre_actual = len(script.get("scenes") or [])
+        print(f"[autopilot] script attempt 1: {_pre_actual}/{expected_scenes} scenes",
               flush=True)
-        try:
-            raw_fill = claude.generate_missing_scenes(
-                existing_scenes=script.get("scenes") or [],
-                needed=_missing,
-                voiceover=script.get("voiceover", ""),
-                style_notes=style_notes,
-                master_prompt=st["master_prompt"],
-            )
-            fill_data = extract_json(raw_fill)
-            new_scenes = fill_data.get("scenes") or []
-            for sc in new_scenes:
-                if sc.get("prompt"):
-                    sc["prompt"] = _sanitize_prompt(sc["prompt"])
-            if new_scenes:
-                script["scenes"] = (script.get("scenes") or []) + new_scenes
-                print(f"[autopilot] after fill: "
-                      f"{len(script['scenes'])} scenes", flush=True)
-        except Exception as fill_ex:
-            print(f"[autopilot] Claude fill failed ({fill_ex}); using split",
+
+        # ── Retry if Claude badly undershoots (<60 %) ──────────────────────────
+        if _pre_actual < expected_scenes * 0.6 and expected_scenes > 4:
+            try:
+                raw2 = claude.generate_script(
+                    title=title,
+                    description=(
+                        desc + f"\n\nCRITICAL: This is a FAST-CUT video that needs "
+                        f"EXACTLY {expected_scenes} scenes. The previous attempt only had "
+                        f"{_pre_actual} scenes — that is NOT acceptable. Write all "
+                        f"{expected_scenes} unique visual moments now, numbered 1 to "
+                        f"{expected_scenes}. Do not stop early."
+                    ),
+                    total_duration=max(1.0, total_dur),
+                    pacing_seconds=max(0.1, pacing),
+                    num_characters=num_chars,
+                    style_notes=style_notes,
+                    master_prompt=st["master_prompt"],
+                    dynamic=body.dynamic,
+                )
+                script2 = extract_json(raw2)
+                if len(script2.get("scenes") or []) > _pre_actual:
+                    script = script2
+                    print(f"[autopilot] retry improved: "
+                          f"{len(script.get('scenes',[]))} scenes", flush=True)
+            except Exception:
+                pass
+
+        # ── Fill remaining missing scenes with unique Claude-generated prompts ──
+        # This replaces the mechanical camera-angle split: Claude writes genuinely
+        # different visual moments for every missing slot.
+        _actual_now = len(script.get("scenes") or [])
+        if _actual_now < expected_scenes:
+            _missing = expected_scenes - _actual_now
+            print(f"[autopilot] filling {_missing} missing scenes via Claude",
                   flush=True)
-            script = _split_script_scenes(script, expected_scenes)
+            try:
+                raw_fill = claude.generate_missing_scenes(
+                    existing_scenes=script.get("scenes") or [],
+                    needed=_missing,
+                    voiceover=script.get("voiceover", ""),
+                    style_notes=style_notes,
+                    master_prompt=st["master_prompt"],
+                )
+                fill_data = extract_json(raw_fill)
+                new_scenes = fill_data.get("scenes") or []
+                for sc in new_scenes:
+                    if sc.get("prompt"):
+                        sc["prompt"] = _sanitize_prompt(sc["prompt"])
+                if new_scenes:
+                    script["scenes"] = (script.get("scenes") or []) + new_scenes
+                    print(f"[autopilot] after fill: "
+                          f"{len(script['scenes'])} scenes", flush=True)
+            except Exception as fill_ex:
+                print(f"[autopilot] Claude fill failed ({fill_ex}); using split",
+                      flush=True)
+                script = _split_script_scenes(script, expected_scenes)
 
-    # ── Trim if over (shouldn't happen, but be safe) ───────────────────────
-    if len(script.get("scenes") or []) > expected_scenes:
-        script["scenes"] = script["scenes"][:expected_scenes]
+        # ── Trim if over (shouldn't happen, but be safe) ───────────────────────
+        if len(script.get("scenes") or []) > expected_scenes:
+            script["scenes"] = script["scenes"][:expected_scenes]
 
-    # Normalize alias field names (visual->prompt, scene->n, caption->frame text)
-    # across ALL scenes — including any added by the retry/fill/split paths —
-    # so every frame renders from its real VISUAL description, not the narration.
-    script["scenes"] = _normalize_scenes(script.get("scenes"))
-    script["scene_count"] = len(script.get("scenes") or [])
-    print(f"[autopilot] final scene count: {script['scene_count']}", flush=True)
+        # Normalize alias field names (visual->prompt, scene->n, caption->frame text)
+        # across ALL scenes — including any added by the retry/fill/split paths —
+        # so every frame renders from its real VISUAL description, not the narration.
+        script["scenes"] = _normalize_scenes(script.get("scenes"))
+        script["scene_count"] = len(script.get("scenes") or [])
+        print(f"[autopilot] final scene count: {script['scene_count']}", flush=True)
 
-    # ── Sanitize all prompts ───────────────────────────────────────────────
-    for sc in (script.get("scenes") or []):
-        if sc.get("prompt"):
-            sc["prompt"] = _sanitize_prompt(sc["prompt"])
-    for ch in (script.get("characters") or []):
-        if ch.get("sheet_prompt"):
-            ch["sheet_prompt"] = _sanitize_prompt(ch["sheet_prompt"])
+        # ── Sanitize all prompts ───────────────────────────────────────────────
+        for sc in (script.get("scenes") or []):
+            if sc.get("prompt"):
+                sc["prompt"] = _sanitize_prompt(sc["prompt"])
+        for ch in (script.get("characters") or []):
+            if ch.get("sheet_prompt"):
+                ch["sheet_prompt"] = _sanitize_prompt(ch["sheet_prompt"])
 
-    # ── Character count enforcement ────────────────────────────────────────
-    # Only enforce when the user set an explicit count (>0). When auto-cast
-    # (num_chars=-1), target_chars would be 0 and this would delete ALL
-    # characters — the script model decided the cast size, trust it.
-    target_chars = max(0, num_chars)
-    raw_chars = script.get("characters") or []
-    if target_chars > 0 and len(raw_chars) > target_chars:
-        script["characters"] = raw_chars[:target_chars]
+        # ── Character count enforcement ────────────────────────────────────────
+        # Only enforce when the user set an explicit count (>0). When auto-cast
+        # (num_chars=-1), target_chars would be 0 and this would delete ALL
+        # characters — the script model decided the cast size, trust it.
+        target_chars = max(0, num_chars)
+        raw_chars = script.get("characters") or []
+        if target_chars > 0 and len(raw_chars) > target_chars:
+            script["characters"] = raw_chars[:target_chars]
 
-    st = store.load_state()
-    st["script"] = script
-    store.save_state(st)
-    steps.append({"step": "script", "scenes": len(script.get("scenes") or []),
-                  "characters": len(script.get("characters") or [])})
-    store.log_usage("script", 1, 0.01)
+        st = store.load_state()
+        st["script"] = script
+        store.save_state(st)
+        steps.append({"step": "script", "scenes": len(script.get("scenes") or []),
+                      "characters": len(script.get("characters") or [])})
+        store.log_usage("script", 1, 0.01)
 
     # ── STEP 2.5: Claude cut planner ──────────────────────────────────────
     # Claude assigns a hold_seconds to every scene BEFORE image generation so
@@ -6690,11 +6797,25 @@ def api_autopilot(body: AutopilotIn, request: Request):
     img_client = get_image_client(request)
     char_created = []
     char_fatal_err = None
+    # RESUME: names that already have a saved sheet on disk — don't re-render.
+    _existing_char_names = set()
+    if _resume:
+        _existing_char_names = {
+            (c.get("name") or "").strip().lower()
+            for c in (store.load_state().get("characters") or [])
+            if c.get("sheet_url") and (c.get("name") or "").strip()
+        }
+        if _existing_char_names:
+            print(f"[autopilot] RESUME: {len(_existing_char_names)} character "
+                  f"sheet(s) already on disk — skipping those", flush=True)
     for c in chars:
         _check_stop(run_id)
         name = (c.get("name") or "").strip()
         sheet_prompt = (c.get("sheet_prompt") or c.get("description") or "").strip()
         if not name:
+            continue
+        if _resume and name.lower() in _existing_char_names:
+            char_created.append(name)   # count it as done
             continue
 
         _sheet_box = {}
@@ -6857,8 +6978,21 @@ def api_autopilot(body: AutopilotIn, request: Request):
     frames_ok, frames_fail = 0, 0
     fatal_image_err = None
     _skipped_blank = 0
+    # RESUME: frames already rendered (in scene order) are at the front of the
+    # saved sequence. Skip that many scenes so we only render the missing tail.
+    _already_frames = 0
+    if _resume:
+        _already_frames = len(store.load_state().get("sequence") or [])
+        if _already_frames:
+            frames_ok = _already_frames   # count existing toward the min-frames gate
+            print(f"[autopilot] RESUME: {_already_frames} frame(s) already "
+                  f"rendered — resuming from scene {_already_frames + 1}",
+                  flush=True)
+            _ap_prog(run_id, frames_done=_already_frames, frames_failed=0)
     for _scene_i, sc in enumerate(scenes):
         _check_stop(run_id)
+        if _resume and _scene_i < _already_frames:
+            continue   # this scene's frame is already on disk
         p = (sc.get("prompt") or "").strip()
         if not p:
             # Don't silently drop a scene with no image prompt — that produced

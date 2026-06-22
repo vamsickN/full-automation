@@ -1362,6 +1362,7 @@
             <button class="btn danger" id="apStopBtn" onclick="stopAutopilot()" style="white-space:nowrap; display:none">■ Stop</button>
             <button class="btn outline" id="apRegenBtn" onclick="regenAutopilot()" style="white-space:nowrap; display:none">↻ Regenerate</button>
           </div>
+          <div id="apContinueBanner" style="display:none; align-items:center; gap:8px; margin-top:10px; padding:10px 12px; background:rgba(255,180,40,.10); border:1px solid rgba(255,180,40,.35); border-radius:8px; font-size:13px; color:var(--amber)"></div>
           <div class="row" style="gap:10px; align-items:end; flex-wrap:wrap; margin-top:8px">
             <div style="min-width:140px">
               <label class="label" style="margin:0 0 4px">Video length (sec)</label>
@@ -3347,6 +3348,8 @@ async function load(){
   const oq=$("#optQuality"); if(oq && !oq.dataset.bound){ oq.addEventListener("change", updateCost); oq.dataset.bound="1"; }
   updateCost();
   await loadProjects();
+  // surface a ▶ Continue button if this project has an interrupted autopilot run
+  try{ checkIncompleteRun(); }catch(_){}
   // if the user is sitting on the Workflow tab during a switch, rebuild it now
   if($("#view-workflow") && $("#view-workflow").classList.contains("active")) wfOpen();
 }
@@ -6127,7 +6130,7 @@ async function findTopics(){
   finally{ busy(b,false); }
 }
 function regenAutopilot(){ runAutopilot(AP_LAST.idx, AP_LAST.fromCache); }
-async function runAutopilot(idx=0, fromCache=false){
+async function runAutopilot(idx=0, fromCache=false, resume=false){
   const urls=_apUrls(); if(!urls.length){toast("Paste at least one YouTube link","err");return;}
   const url=urls[0];
   if(!hasImageKey()||!CFG.has_claude_key||!CFG.has_voice_key){ toast("Set all 3 API keys (image, Claude, and a voice provider — ElevenLabs or MiMo) in Settings first","err"); openSettings(); return; }
@@ -6166,9 +6169,35 @@ async function runAutopilot(idx=0, fromCache=false){
     const cut_click_style=($("#apClickStyle")||{}).value||"click";
     const keep_style=!($("#apMyStyle")&&!$("#apMyStyle").checked);
     const angle_variety=!($("#apAngles")&&!$("#apAngles").checked);
-    const d=await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({url,urls,nudge,target_seconds,voice_id,run_id:AP_RUN_ID,step_timeout,suggestion_index:idx,from_cache:fromCache,orientation,sound_design,pacing_seconds,num_characters,smart_edit,cut_clicks,cut_click_style,keep_style,angle_variety})});
+    // Network-resilient run: the autopilot is ONE long POST. If the connection
+    // drops mid-pipeline (proxy/server blip), the run usually keeps going (or
+    // its partial work is saved on disk). Instead of failing, we auto-retry
+    // with resume:true so the server skips everything already done and finishes
+    // only the missing tail. Up to AP_MAX_NET_RETRIES reconnect attempts.
+    const _basePayload={url,urls,nudge,target_seconds,voice_id,run_id:AP_RUN_ID,step_timeout,suggestion_index:idx,from_cache:fromCache,orientation,sound_design,pacing_seconds,num_characters,smart_edit,cut_clicks,cut_click_style,keep_style,angle_variety};
+    const AP_MAX_NET_RETRIES=4;
+    let d=null, _netTries=0, _resume=resume;
+    while(true){
+      try{
+        const payload=Object.assign({}, _basePayload, {resume:_resume});
+        d=await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+        break;  // success
+      }catch(err){
+        const isNet=/Network error/i.test(err.message||"");
+        if(isNet && _netTries<AP_MAX_NET_RETRIES){
+          _netTries++;
+          _resume=true;  // every reconnect resumes — never restarts from scratch
+          $("#apStat").textContent=`reconnecting… (${_netTries}/${AP_MAX_NET_RETRIES}) — your progress is saved`;
+          toast(`Connection blip — reconnecting and continuing (${_netTries}/${AP_MAX_NET_RETRIES})`,"");
+          await new Promise(r=>setTimeout(r, 4000));
+          continue;  // poll keeps running; retry the request
+        }
+        throw err;  // not a network error, or out of retries -> surface it
+      }
+    }
     clearInterval(poll);
     STATE=await api("/api/state").then(r=>r.state);
+    try{ const _cb=$("#apContinueBanner"); if(_cb) _cb.style.display="none"; }catch(_){}
     renderBoard(); renderCharacters(); renderCast(); renderEditsList();
     if(d.stopped){
       AP_STEP_NAMES.forEach((_,i)=>{const dot=document.querySelector(`#aps${i} .ap-dot`);if(dot&&dot.classList.contains("wait"))dot.className="ap-dot";});
@@ -6223,8 +6252,44 @@ async function runAutopilot(idx=0, fromCache=false){
     AP_STEP_NAMES.forEach((_,i)=>{const dot=document.querySelector(`#aps${i} .ap-dot`);if(dot&&dot.classList.contains("wait"))dot.className="ap-dot";});
     try{ engFinish(false); engCore({title:"Engine stopped", sub:_esc(e.message||"failed")}); }catch(_){}
     toast(e.message,"err");
-    $("#apResult").innerHTML=`<div style="color:var(--red);font-size:13px">Failed: ${_esc(e.message)}</div>`;
+    const _isNet=/Network error/i.test(e.message||"");
+    // On a network failure the work so far is saved on disk — offer to CONTINUE
+    // from where it stopped instead of starting over.
+    let _failHtml=`<div style="color:var(--red);font-size:13px">Failed: ${_esc(e.message)}</div>`;
+    _failHtml+=`<div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">`+
+      `<button class="btn glow sm" onclick="continueAutopilot()">▶ Continue from where it stopped</button>`+
+      `</div>`;
+    if(_isNet) _failHtml+=`<div style="font-size:12px;color:var(--muted);margin-top:6px">Your script, characters and rendered frames are saved. Continue resumes only the missing steps.</div>`;
+    $("#apResult").innerHTML=_failHtml;
   }finally{ busy(b,false); $("#apStopBtn").style.display="none"; $("#apRegenBtn").style.display="inline-flex"; AP_RUN_ID=null; }
+}
+
+// ── CONTINUE an interrupted run ─────────────────────────────────────────────
+// Re-runs autopilot with resume:true so the server reuses the saved script,
+// characters and frames and only renders/builds what's missing.
+async function continueAutopilot(){
+  runAutopilot(AP_LAST?AP_LAST.idx:0, true, true);
+}
+
+// On page load (and after a project switch) check whether the current project
+// has an interrupted autopilot run, and if so show a Continue banner.
+async function checkIncompleteRun(){
+  try{
+    const s=await api("/api/autopilot/last");
+    const banner=$("#apContinueBanner");
+    if(s&&s.incomplete){
+      if(banner){
+        const parts=[];
+        if(s.has_script) parts.push(`${s.scenes} scenes`);
+        if(s.has_characters) parts.push(`${s.characters} characters`);
+        if(s.has_frames) parts.push(`${s.frames} frames`);
+        banner.innerHTML=`<span>⏸ Unfinished video found — ${parts.join(", ")||"some progress"} saved`+
+          (s.last_step?` (stopped at: ${_esc(s.last_step)})`:"")+`.</span>`+
+          `<button class="btn glow sm" style="margin-left:10px" onclick="continueAutopilot()">▶ Continue</button>`;
+        banner.style.display="flex";
+      }
+    } else if(banner){ banner.style.display="none"; }
+  }catch(_){}
 }
 const AP_STEP_LABELS={analyse:"Analysing video",script:"Writing script",characters:"Character sheets",frames:"Rendering frames",video:"Building video",thumbnail:"Thumbnail",seo:"YouTube SEO"};
 function _fmtDur(s){ s=Math.max(0,Math.round(s||0)); const m=Math.floor(s/60); return m? `${m}m ${s%60}s` : `${s}s`; }
