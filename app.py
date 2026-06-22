@@ -47,6 +47,39 @@ from claude_client import ClaudeClient, extract_json
 store.init()
 app = FastAPI(title="Continuity Studio")
 
+
+# --- Windows asyncio noise suppression ------------------------------------- #
+# On Windows the Proactor event loop logs a full Traceback when a client drops
+# an in-flight connection mid-stream (e.g. the browser scrubs/closes a <video>
+# during a 206 range request): "ConnectionResetError: [WinError 10054]".
+# It's harmless — the request was simply cancelled by the client — but it spams
+# the log and trips watch-pattern alerts. Install a loop exception handler that
+# swallows ONLY these connection-reset/abort callbacks and lets everything else
+# through unchanged.
+@app.on_event("startup")
+def _silence_proactor_connection_lost():
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+    except Exception:
+        return
+    _default = loop.get_exception_handler()
+
+    def _handler(_loop, context):
+        exc = context.get("exception")
+        if isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return  # client dropped the connection — benign, ignore
+        msg = str(context.get("message", ""))
+        if "_call_connection_lost" in msg or "WinError 10054" in str(exc):
+            return
+        if _default is not None:
+            _default(_loop, context)
+        else:
+            _loop.default_exception_handler(context)
+
+    loop.set_exception_handler(_handler)
+
+
 # --- Auth Helpers ---
 def load_users():
     path = os.path.join(os.path.dirname(__file__), "users.json")
