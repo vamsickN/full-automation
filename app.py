@@ -6922,9 +6922,26 @@ def api_autopilot(body: AutopilotIn, request: Request):
         use_cache = True
     else:
         if not urls:
-            raise HTTPException(400, "Paste at least one YouTube link.")
-        use_cache = (body.from_cache and cached.get("suggestions")
-                     and (cached.get("input_urls") or [cached.get("url")]) == urls)
+            # Resume path: the user just clicked ▶ Resume on an old project
+            # whose YouTube links were typed days ago — they're not in the
+            # textbox anymore (page reload cleared them). If the cached
+            # inspiration is still on disk for THIS project, USE IT and
+            # pretend the URL list was the cached one. This is the exact
+            # same fallback as `_autopilot_disk_status` using the breadcrumb
+            # to recover an interrupted run.
+            if _resume and cached.get("suggestions"):
+                _cached_urls = (cached.get("input_urls")
+                                or [cached.get("url")] or [])
+                print(f"[autopilot] RESUME with empty urls — "
+                      f"reusing cached yt_inspiration ({len(_cached_urls)} link(s))",
+                      flush=True)
+                urls = _cached_urls
+                use_cache = True
+            else:
+                raise HTTPException(400, "Paste at least one YouTube link.")
+        else:
+            use_cache = (body.from_cache and cached.get("suggestions")
+                         and (cached.get("input_urls") or [cached.get("url")]) == urls)
     insp = cached if use_cache else _autopilot_analyze(
         urls, body.nudge, body.model, request, 10,
         constraints={"target_seconds": body.target_seconds,
