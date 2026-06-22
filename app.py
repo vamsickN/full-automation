@@ -48,6 +48,23 @@ store.init()
 app = FastAPI(title="Continuity Studio")
 
 
+# --- Writable config dir (packaged-app aware) ------------------------------ #
+# In dev, vault.json / users.json / codes.json live next to this module. In a
+# frozen build (PyInstaller) the module lives in a READ-ONLY temp dir, so the
+# launcher points CS_CONFIG_DIR at a writable per-user location
+# (e.g. %LOCALAPPDATA%\ContinuityStudio). Default keeps dev behaviour intact.
+def _config_dir():
+    d = os.environ.get("CS_CONFIG_DIR")
+    if d:
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            pass
+        return d
+    return os.path.dirname(__file__)
+
+
+
 # --- Windows asyncio noise suppression ------------------------------------- #
 # On Windows the Proactor event loop logs a full Traceback when a client drops
 # an in-flight connection mid-stream (e.g. the browser scrubs/closes a <video>
@@ -82,28 +99,39 @@ def _silence_proactor_connection_lost():
 
 # --- Auth Helpers ---
 def load_users():
-    path = os.path.join(os.path.dirname(__file__), "users.json")
+    path = os.path.join(_config_dir(), "users.json")
     if not os.path.exists(path): return {}
     with open(path, "r") as f: return json.load(f)
 
 def save_users(users):
-    path = os.path.join(os.path.dirname(__file__), "users.json")
+    path = os.path.join(_config_dir(), "users.json")
     with open(path, "w") as f: json.dump(users, f, indent=2)
 
 def load_codes():
-    path = os.path.join(os.path.dirname(__file__), "codes.json")
+    path = os.path.join(_config_dir(), "codes.json")
     if not os.path.exists(path): return {}
     with open(path, "r") as f: return json.load(f)
 
 def save_codes(codes):
-    path = os.path.join(os.path.dirname(__file__), "codes.json")
+    path = os.path.join(_config_dir(), "codes.json")
     with open(path, "w") as f: json.dump(codes, f, indent=2)
 
 import vault_crypto
 
 def load_vault():
-    path = os.path.join(os.path.dirname(__file__), "vault.json")
-    if not os.path.exists(path): return {}
+    path = os.path.join(_config_dir(), "vault.json")
+    if not os.path.exists(path):
+        # First run of a packaged build: seed from the bundled vault.json (next
+        # to the module) so the user's keys carry over into the writable dir.
+        _seed = os.path.join(os.path.dirname(__file__), "vault.json")
+        if _seed != path and os.path.exists(_seed):
+            try:
+                import shutil
+                shutil.copyfile(_seed, path)
+            except Exception:
+                return {}
+        else:
+            return {}
     with open(path, "r") as f: raw = json.load(f)
     decrypted = vault_crypto.decrypt_vault(raw)
     if vault_crypto.is_encrypted() and vault_crypto.needs_migration(raw):
@@ -111,7 +139,7 @@ def load_vault():
     return decrypted
 
 def save_vault(vault):
-    path = os.path.join(os.path.dirname(__file__), "vault.json")
+    path = os.path.join(_config_dir(), "vault.json")
     encrypted = vault_crypto.encrypt_vault(vault)
     with open(path, "w") as f: json.dump(encrypted, f, indent=2)
 

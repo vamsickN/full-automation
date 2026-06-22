@@ -32,3 +32,12 @@ vault.json
 vault.json.bak*
 users.json
 codes.json
+
+# --- Windows app build artifacts (large, regenerable) ---
+build/
+dist/
+*.spec.bak
+ffmpeg_bin/
+# installer_output/ is NOT gitignored — the final Setup.exe is pushed (user-requested).
+# *.exe is NOT gitignored — same reason; the source *.exe artifacts in dist/ stay gitignored via the dist/ line above.
+
