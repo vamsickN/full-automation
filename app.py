@@ -6134,6 +6134,12 @@ class AutopilotIn(BaseModel):
                                        # script/characters/frames/video already
                                        # on disk and only do the missing steps,
                                        # instead of regenerating from scratch.
+    project_id: Optional[str] = None   # target a NON-current project — used by
+                                       # the project-picker "▶ Resume" button
+                                       # to restart an old/stuck run without
+                                       # first switching the user's active
+                                       # project (which would lose the resume
+                                       # mid-flight).
 
 
 # --- Autopilot run control: stop flag + per-step deadline ------------------- #
@@ -6294,6 +6300,141 @@ def api_autopilot_last():
     can be CONTINUED, and what's already been generated. The UI uses this on
     page-load (and after a network error) to show a ▶ Continue button."""
     return _autopilot_disk_status()
+
+
+# --------------------------------------------------------------------------- #
+# Per-project progress summary for the project list / Resume menu.
+#
+# The autopilot breadcrumb (`state["autopilot_run"]`) is the source of truth
+# for whether a run was interrupted. A breadcrumb that's been stale for hours
+# (no `updated` refresh) AND says `done=False` is almost certainly a run that
+# died with the server (kill -9, power loss, tab crash before the resume
+# banner could persist). Surface those as "stuck" so the user knows to Resume
+# or Delete rather than wondering if the project is still rendering.
+_STUCK_AFTER_SEC = 2 * 3600  # 2 hours without a progress tick = stuck
+
+
+def _project_summary(pid, info):
+    """Compute the autopilot progress snapshot for a single project. Pure
+    function of the on-disk state — safe to call for every project on every
+    list request. Returns a dict the frontend can render directly."""
+    try:
+        st = store.load_state_for(pid)
+    except Exception:
+        return {"id": pid, "name": (info or {}).get("name", pid),
+                "pct": 0, "status": "empty", "incomplete": False, "stuck": False}
+    name = (info or {}).get("name") or pid
+    run = st.get("autopilot_run") or {}
+    script = st.get("script") or {}
+    scenes = script.get("scenes") or []
+    chars = [c for c in (st.get("characters") or []) if c.get("sheet_url")]
+    frames = st.get("sequence") or []
+    has_script = bool(scenes)
+    has_chars = bool(chars)
+    has_frames = bool(frames)
+    has_video = bool((st.get("voiceover") or {}).get("url")) and has_frames
+    has_seo = bool(st.get("seo"))
+    done_flag = bool(run.get("done"))
+    breadcrumb_updated = run.get("updated") or 0
+    breadcrumb_age = (time.time() - breadcrumb_updated) if breadcrumb_updated else None
+    # A run is "stuck" if it has a breadcrumb that's still claiming in-flight
+    # but hasn't ticked for hours — almost certainly an orphaned process.
+    stuck = (bool(run.get("run_id")) and not done_flag
+             and breadcrumb_age is not None and breadcrumb_age > _STUCK_AFTER_SEC)
+    # "Incomplete / continuable" mirrors _autopilot_disk_status semantics.
+    if has_video:
+        incomplete = bool(run.get("run_id")) and not done_flag
+    else:
+        incomplete = has_script or has_chars or has_frames
+    # Progress percentage — weight the heavy step (frames) the most so the bar
+    # feels honest. Script + characters are cheap; frames + video are slow.
+    if has_video and done_flag:
+        pct = 100
+        status = "done"
+    elif stuck:
+        pct = _rough_pct(has_script, has_chars, has_frames, frames, run, len(scenes))
+        status = "stuck"
+    elif incomplete:
+        pct = _rough_pct(has_script, has_chars, has_frames, frames, run, len(scenes))
+        status = "in_progress"
+    elif has_script or has_chars or has_frames:
+        # Work was done but no autopilot breadcrumb — manual render.
+        pct = _rough_pct(has_script, has_chars, has_frames, frames, run, len(scenes))
+        status = "partial"
+    else:
+        pct = 0
+        status = "empty"
+    return {
+        "id": pid,
+        "name": name,
+        "created": (info or {}).get("created"),
+        "updated": (info or {}).get("updated"),
+        "pct": pct,
+        "status": status,
+        "incomplete": incomplete,
+        "stuck": stuck,
+        "last_step": run.get("step"),
+        "run_id": run.get("run_id"),
+        "breadcrumb_updated": breadcrumb_updated or None,
+        "has_script": has_script, "scenes": len(scenes),
+        "has_characters": has_chars, "characters": len(chars),
+        "has_frames": has_frames, "frames": len(frames),
+        "has_video": has_video,
+        "has_seo": has_seo,
+        "done": done_flag,
+        # Use the breadcrumb counters when available so the bar reflects the
+        # in-flight totals; otherwise fall back to what's on disk.
+        "chars_done": run.get("chars_done") or len(chars),
+        "chars_total": run.get("chars_total") or len(chars),
+        "frames_done": run.get("frames_done") or len(frames),
+        "frames_total": run.get("frames_total") or len(frames),
+    }
+
+
+def _rough_pct(has_script, has_chars, has_frames, frames, run, _scenes=0):
+    """Cheap progress % in the absence of a live progress payload. Weights the
+    expensive steps so a project that's mid-frames doesn't show 80%."""
+    # Try the live counters first (frames_done / frames_total).
+    ft = run.get("frames_total") or 0
+    fd = run.get("frames_done") or 0
+    if ft > 0:
+        return min(99, round(fd * 100 / ft))
+    # Fallback: 25% script + 15% chars + 60% frames
+    pct = 0
+    if has_script: pct += 25
+    if has_chars: pct += 15
+    if has_frames:
+        # Each frame worth the same chunk of the frames step. Use the script's
+        # scene count as the EXPECTED total so a mid-frames project doesn't
+        # pretend it's done — bug: previous version used `max(n,1)` as both
+        # numerator AND denominator, so 60% was added unconditionally.
+        n = len(frames)
+        est_total = run.get("frames_total") or 0
+        if not est_total or est_total < n:
+            # `_scenes` is passed in by _project_summary from the loaded state.
+            est_total = _scenes if _scenes else n
+        pct += min(60, round(n * 60 / max(est_total, 1)))
+    return min(99, pct)
+
+
+@app.get("/api/projects/summary")
+def api_projects_summary():
+    """List every project on disk with its autopilot progress snapshot. Used by
+    the project picker so the user can see which projects are done, which are
+    mid-run, and which are stuck from a previous crash."""
+    try:
+        idx = store.list_projects()
+    except Exception as e:
+        raise HTTPException(500, f"projects index: {e}")
+    info_map = {p["id"]: p for p in (idx.get("projects") or [])}
+    summaries = [_project_summary(p["id"], p)
+                 for p in (idx.get("projects") or [])]
+    # Sort: in-progress + stuck first, then by most-recently-updated.
+    summaries.sort(key=lambda s: (
+        0 if s["status"] in ("stuck", "in_progress") else 1,
+        -(s.get("updated") or 0),
+    ))
+    return {"current": idx.get("current"), "projects": summaries}
 
 
 @app.get("/api/autopilot/progress/{run_id}")
@@ -6697,6 +6838,30 @@ def api_autopilot(body: AutopilotIn, request: Request):
         raise HTTPException(400, "No image API key — add it in Settings.")
     if not _has_voice_key(s):
         raise HTTPException(400, "No voice/TTS key — add ElevenLabs or MiMo in Settings.")
+
+    # ── PROJECT-PICKER RESUME ────────────────────────────────────────────────
+    # When the user clicks "▶ Resume" on a NON-current project from the project
+    # list, `body.project_id` arrives. Switch the global current pointer to
+    # that project FIRST so every subsequent store.load_state() / load_state_for
+    # / write goes to the right file. After a successful resume the user is
+    # left on the resumed project (that's what they expected to see open).
+    if body.project_id:
+        try:
+            idx = store._read_index()
+            ids = {p["id"] for p in (idx.get("projects") or [])}
+            if body.project_id not in ids:
+                raise HTTPException(404, f"project {body.project_id} not found")
+            if idx.get("current") != body.project_id:
+                store.switch_project(body.project_id)
+                print(f"[autopilot] project switched to {body.project_id} for resume",
+                      flush=True)
+            # Always force resume semantics for picker-launched runs — that's
+            # the whole point of clicking Resume on a stuck project.
+            body.resume = True
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(500, f"project switch failed: {e}")
 
     run_id = body.run_id or store.new_id("run")
     # ── RESUME / CONTINUE an interrupted run ───────────────────────────────

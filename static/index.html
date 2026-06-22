@@ -546,6 +546,29 @@
   .pm-item .meta{font-family:var(--mono); font-size:9.5px; color:var(--faint)}
   .pm-act{background:transparent; border:none; color:var(--faint); cursor:pointer; padding:4px 6px; border-radius:7px; font-size:12px; line-height:1}
   .pm-act:hover{color:var(--ink); background:rgba(255,255,255,.07)}
+
+  /* ---- per-project progress / resume ---- */
+  .pm-body{flex:1; min-width:0; display:flex; flex-direction:column; gap:4px; padding:2px 0}
+  .pm-row1{display:flex; align-items:center; gap:6px; min-width:0}
+  .pm-row1 .nm{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .pm-pct{font-family:var(--mono); font-size:9.5px; color:var(--muted); flex:none}
+  .pm-bar{height:4px; background:rgba(255,255,255,.06); border-radius:2px; overflow:hidden}
+  .pm-bar-fill{height:100%; background:var(--amber); transition:width .25s ease}
+  .pm-status{display:inline-block; font-family:var(--mono); font-size:9px; padding:2px 6px; border-radius:9px; text-transform:uppercase; letter-spacing:.4px; flex:none}
+  .pm-status.done{background:rgba(0,184,166,.14); color:var(--teal)}
+  .pm-status.in_progress{background:rgba(255,122,24,.14); color:var(--amber)}
+  .pm-status.stuck{background:rgba(229,72,77,.18); color:var(--red); animation:pmPulse 1.6s infinite}
+  .pm-status.partial{background:rgba(255,255,255,.07); color:var(--muted)}
+  .pm-status.empty{background:rgba(255,255,255,.04); color:var(--faint)}
+  @keyframes pmPulse{0%,100%{opacity:1}50%{opacity:.55}}
+  .pm-row2{display:flex; align-items:center; gap:6px; font-family:var(--mono); font-size:9.5px; color:var(--faint); min-width:0}
+  .pm-row2 .meta{flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .pm-resume{background:var(--amber); color:#1a0d00; border:none; border-radius:7px; padding:3px 8px; font-size:10.5px; font-weight:700; cursor:pointer; font-family:var(--body); flex:none; line-height:1.1; transition:.12s}
+  .pm-resume:hover{filter:brightness(1.1); transform:translateY(-1px)}
+  .pm-resume.stuck{background:var(--red); color:#fff; animation:pmResumePulse 2s infinite}
+  @keyframes pmResumePulse{0%,100%{box-shadow:0 0 0 0 rgba(229,72,77,.5)}50%{box-shadow:0 0 0 6px rgba(229,72,77,0)}}
+  .pm-item{flex-wrap:wrap}
+  .pm-item .acts{display:flex; gap:2px; align-items:center; flex:none}
   .pm-new{width:100%; margin-top:8px; padding:11px; border-radius:10px; border:1px dashed var(--line2);
     background:transparent; color:var(--amber-soft); font-weight:700; font-size:13px; cursor:pointer; transition:.15s}
   .pm-new:hover{border-color:var(--amber); color:var(--amber); background:rgba(255,122,24,.05)}
@@ -3138,39 +3161,123 @@ async function a2vReroll(idx){
 let PROJECTS = {current:null, projects:[]};
 async function loadProjects(){
   try{ PROJECTS = await api("/api/projects"); }catch(e){ return; }
+  // Fetch per-project progress snapshot in parallel — single endpoint,
+  // returns [{id,pct,status,incomplete,stuck,last_step,...}]. Failures here
+  // don't block the project list itself; UI just shows no progress bar.
+  try{ PROJECTS.summaries = (await api("/api/projects/summary")).projects || []; }
+  catch(e){ PROJECTS.summaries = []; }
   const cur = (PROJECTS.projects||[]).find(p=>p.id===PROJECTS.current);
   const nm=$("#projName"); if(nm) nm.textContent = cur ? cur.name : "Project";
   renderProjMenu();
 }
 function _ago(ts){ if(!ts) return ""; const s=Math.max(0,Math.floor(Date.now()/1000-ts));
   if(s<60)return "just now"; if(s<3600)return Math.floor(s/60)+"m ago"; if(s<86400)return Math.floor(s/3600)+"h ago"; return Math.floor(s/86400)+"d ago"; }
-function renderProjMenu(){
-  const list=$("#projList"); if(!list) return;
-  const q=($("#projSearch")?.value||"").toLowerCase();
-  const items=(PROJECTS.projects||[]).filter(p=>!q || (p.name||"").toLowerCase().includes(q));
-  if(!items.length){ list.innerHTML=`<div style="padding:12px;color:var(--faint);font-size:12.5px;text-align:center">No matches</div>`; return; }
-  list.innerHTML=items.map(p=>{
-    const on=p.id===PROJECTS.current;
-    return `<div class="pm-item ${on?'on':''}" data-id="${p.id}">
-      <span class="pi-dot"></span>
-      <span class="nm" title="${_esc(p.name)}">${_esc(p.name)}</span>
-      <span class="meta">${_ago(p.updated)}</span>
+function _summ(id){ return (PROJECTS.summaries||[]).find(s=>s.id===id) || null; }
+// Render a single project row. Shows progress bar + status + Resume when the
+// project is incomplete/stuck; otherwise just name + last-updated.
+function _projRow(p, on){
+  const s=_summ(p.id);
+  const pct = s ? Math.max(0, Math.min(100, s.pct||0)) : 0;
+  const status = s ? s.status : "empty";
+  const stuck = s ? !!s.stuck : false;
+  const incomplete = s ? !!s.incomplete : false;
+  const lastStep = s && s.last_step ? ` · stopped at: ${s.last_step}` : "";
+  const ago = _ago(p.updated);
+  const label = status==="done" ? "Done"
+              : status==="stuck" ? "Stuck"
+              : status==="in_progress" ? "In progress"
+              : status==="partial" ? "Partial"
+              : "Empty";
+  // Resume button: shown when stuck OR (incomplete AND not current). Current
+  // project already shows its own big Continue banner — no need to duplicate.
+  const showResume = (stuck || incomplete) && !on;
+  const resumeBtn = showResume
+    ? `<button class="pm-resume ${stuck?'stuck':''}" data-act="resume" title="Resume this project from where it stopped">▶ Resume</button>`
+    : "";
+  return `<div class="pm-item ${on?'on':''}" data-id="${p.id}">
+    <span class="pi-dot"></span>
+    <div class="pm-body">
+      <div class="pm-row1">
+        <span class="nm" title="${_esc(p.name)}">${_esc(p.name)}</span>
+        ${s ? `<span class="pm-pct">${pct}%</span><span class="pm-status ${_esc(status)}">${_esc(label)}</span>` : ""}
+      </div>
+      ${s ? `<div class="pm-bar"><div class="pm-bar-fill" style="width:${pct}%; background:${stuck?'var(--red)':status==='done'?'var(--teal)':'var(--amber)'}"></div></div>` : ""}
+      <div class="pm-row2">
+        <span class="meta">${ago}${lastStep}</span>
+        ${resumeBtn}
+      </div>
+    </div>
+    <div class="acts">
       <button class="pm-act" data-act="dup" title="Duplicate">⧉</button>
       <button class="pm-act" data-act="rename" title="Rename">✎</button>
       <button class="pm-act" data-act="delete" title="Delete">🗑</button>
-    </div>`;}).join("");
+    </div>
+  </div>`;
+}
+function renderProjMenu(){
+  const list=$("#projList"); if(!list) return;
+  const q=($("#projSearch")?.value||"").toLowerCase();
+  // Sort: stuck/in_progress first (most need attention), then done, then empty.
+  // Preserves the relative order from the server otherwise.
+  const items=(PROJECTS.projects||[]).filter(p=>!q || (p.name||"").toLowerCase().includes(q));
+  const _score = p => {
+    const s=_summ(p.id); if(!s) return 5;
+    if(s.status==="stuck") return 0;
+    if(s.status==="in_progress") return 1;
+    if(s.status==="partial") return 2;
+    if(s.status==="done") return 3;
+    return 4;
+  };
+  items.sort((a,b)=>_score(a)-_score(b));
+  if(!items.length){ list.innerHTML=`<div style="padding:12px;color:var(--faint);font-size:12.5px;text-align:center">No matches</div>`; return; }
+  list.innerHTML = items.map(p => _projRow(p, p.id===PROJECTS.current)).join("");
   list.querySelectorAll(".pm-item").forEach(it=>{
     const id=it.dataset.id;
     it.addEventListener("click",e=>{
       const act=e.target.closest(".pm-act");
       if(act){ e.stopPropagation();
-        if(act.dataset.act==="rename") renameProject(id);
+        if(act.dataset.act==="resume") resumeProject(id);
+        else if(act.dataset.act==="rename") renameProject(id);
         else if(act.dataset.act==="dup") duplicateProject(id);
         else deleteProject(id);
         return; }
       switchProject(id);
     });
   });
+}
+// Resume a non-current project from the project list. Hits the same
+// /api/autopilot endpoint with project_id + resume:true — the backend
+// switches the active project first, then forces resume semantics so the
+// existing script/chars/frames are reused and only missing steps run.
+async function resumeProject(id){
+  const s = _summ(id);
+  const proj = (PROJECTS.projects||[]).find(p=>p.id===id);
+  const name = proj ? proj.name : id;
+  const tag = s && s.stuck ? "stuck" : (s && s.incomplete ? "incomplete" : "saved");
+  if(!confirm(`Resume "${name}"?
+
+This project is ${tag}. The autopilot will reuse what's already saved (script, characters, frames) and only run the missing steps.`)) return;
+  $("#projMenu").classList.remove("show");
+  toast(`Resuming "${name}"…`);
+  try{
+    // Same shape as runAutopilot — POST, set AP_RUN_ID, show the progress
+    // panel, drive the existing poll loop. Reusing the runAutopilot UI
+    // (apPaint, #apProgress, etc.) means no duplicated progress plumbing.
+    const d = await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({project_id:id, resume:true, fresh:false, from_cache:true})});
+    if(d && d.run_id){
+      AP_LAST = {run_id:d.run_id, idx:0};
+      AP_RUN_ID = d.run_id;
+      const prog=$("#apProgress"); if(prog){ prog.style.display="block";
+        prog.innerHTML=`<div class="q-head"><div class="q-bar"><div class="q-fill" id="apFill" style="width:0%"></div></div><span class="q-stat" id="apStat">resuming ${_esc(name)}…</span></div>`;
+      }
+      try{ engStart(); }catch(_){}
+      clearInterval(AP_TIMER);
+      AP_TIMER = setInterval(async()=>{
+        try{ const p=await api("/api/autopilot/progress/"+AP_RUN_ID); if(p&&!p.unknown) apPaint(p); }catch(_){}
+      }, 1500);
+    }
+    toast(`Resumed ✓ — ${name}`,"ok");
+  }catch(e){ toast(e.message||"Resume failed","err"); }
 }
 async function duplicateProject(id){
   $("#projMenu").classList.remove("show");
