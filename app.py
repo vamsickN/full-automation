@@ -4058,14 +4058,23 @@ def _synth_per_scene_track(vc, tts_lines, name_hint, pad=0.04):
     work = os.path.join(store.VIDEOS_DIR, f"_aps_{store.new_id('tmp')}")
     os.makedirs(work, exist_ok=True)
     clip_paths, holds = [], []
+    # Deepgram is configured for lossless WAV; other providers may return mp3.
+    # ffmpeg sniffs by content so the extension is cosmetic, but match it so
+    # the lossless source isn't silently re-encoded by a wrong-suffix probe.
+    clip_ext = "wav" if (
+        vc.__class__.__name__ == "DeepgramVoiceClient"
+        and getattr(vc, "encoding", "mp3").lower() in ("wav", "linear16")
+    ) else "mp3"
     for i in range(n):
         line = (tts_lines[i] or "").strip()
         mp3 = vc.synthesize(line if line else " ")
-        ap = os.path.join(work, f"vo_{i:03d}.mp3")
+        ap = os.path.join(work, f"vo_{i:03d}.{clip_ext}")
         with open(ap, "wb") as f:
             f.write(mp3)
         try:
-            editor.trim_silence(ap)
+            # trim_start=False: never eat the first syllable of a scene's VO
+            # (Aura's soft onsets were being clipped — see editor.trim_silence).
+            editor.trim_silence(ap, trim_start=False)
         except Exception:
             pass
         try:
@@ -4088,7 +4097,7 @@ def _synth_per_scene_track(vc, tts_lines, name_hint, pad=0.04):
     filt += f"concat=n={len(clip_paths)}:v=0:a=1[out]"
     track = os.path.join(work, "track.mp3")
     cc = _run_capture(["ffmpeg", "-y", *concat_inputs, "-filter_complex", filt,
-                       "-map", "[out]", "-c:a", "libmp3lame", "-q:a", "4", track])
+                       "-map", "[out]", "-c:a", "libmp3lame", "-q:a", "2", track])
     if cc.returncode != 0 or not os.path.exists(track):
         raise RuntimeError(f"per-scene track concat failed: {(cc.stderr or '')[-200:]}")
     with open(track, "rb") as f:
@@ -7003,8 +7012,17 @@ def api_autopilot(body: AutopilotIn, request: Request):
     chars = script.get("characters") or []
     _scene_total = len([sc for sc in (script.get("scenes") or [])
                         if (sc.get("prompt") or "").strip()])
+    # Seed chars_done from any sheets already on disk so the counter starts at
+    # the real value (e.g. on RESUME) instead of flashing "0/N".
+    try:
+        with _state_write_lock:
+            _seed_state = store.load_state()
+        _seed_done = len([c for c in (_seed_state.get("characters") or [])
+                          if c.get("sheet_url")])
+    except Exception:
+        _seed_done = 0
     _ap_prog(run_id, step="characters", chars_total=len(chars),
-             frames_total=_scene_total)
+             chars_done=min(_seed_done, len(chars)), frames_total=_scene_total)
     img_client = get_image_client(request)
     char_created = []
     char_fatal_err = None
@@ -7100,21 +7118,49 @@ def api_autopilot(body: AutopilotIn, request: Request):
                 print("[autopilot] aborting character sheets — image account is "
                       "out of credits or the key is invalid", flush=True)
                 break
+            # Non-fatal (transient 502 / rate-limit / one-off): retry ONCE before
+            # giving up on this character, so "2 requested" doesn't silently
+            # become "1 made" on a single hiccup. image_queue already backs off
+            # internally; this is a top-level second attempt for the whole sheet.
+            try:
+                print(f"[autopilot] retrying character sheet '{name}' once…",
+                      flush=True)
+                time.sleep(2.0)
+                val = _make_sheet()
+                if val:
+                    char_created.append(val)
+            except Exception as ce2:
+                cmsg2 = str(ce2)
+                print(f"[autopilot] character sheet '{name}' retry FAILED: {cmsg2}",
+                      flush=True)
+                if _is_fatal_image_error(cmsg2):
+                    char_fatal_err = cmsg2
+                    break
         # Drive chars_done from the PERSISTED state (source of truth), not the
         # in-memory char_created accumulator. _make_sheet saves the sheet to
         # state.characters BEFORE returning; if a sheet finishes between our
         # deadline check and the next iteration, this picks it up. Also handles
         # the case where a previous run was stopped mid-sheet — those sheets
         # are already in state and shouldn't be re-counted as "in progress".
+        # Drive chars_done from the PERSISTED state (source of truth), but read
+        # it UNDER the state lock so we never observe a half-written file mid-
+        # save (which returns 0 characters and made the counter jump 1/2 -> 0/2).
+        # Also floor it by the in-memory char_created count so the number can
+        # only ever go UP within a run — a progress counter must be monotonic.
         try:
-            _cur_state = store.load_state()
+            with _state_write_lock:
+                _cur_state = store.load_state()
             _persisted_chars = [c for c in (_cur_state.get("characters") or [])
                                 if c.get("sheet_url")]
-            _chars_done_so_far = len(_persisted_chars)
+            _chars_done_so_far = max(len(_persisted_chars), len(char_created))
         except Exception:
             _chars_done_so_far = len(char_created)
-        _ap_prog(run_id, chars_done=_chars_done_so_far,
-                 last_image_url=_sheet_box.get("url"))
+        # Only push last_image_url when we actually have one — passing None
+        # would blank a just-shown sheet preview on the node. Keep it sticky.
+        _prog_kw = {"chars_done": _chars_done_so_far}
+        if _sheet_box.get("url"):
+            _prog_kw["last_image_url"] = _sheet_box["url"]
+        _ap_prog(run_id, **_prog_kw)
     if char_fatal_err:
         char_err_hint = ("character sheets failed — image account problem: "
                          f"{char_fatal_err[:240]}")
@@ -7240,9 +7286,11 @@ def api_autopilot(body: AutopilotIn, request: Request):
                               scene_vo=(sc.get("vo") or sc.get("narration")
                                         or sc.get("voice_over") or ""))
             frames_ok += 1
-            _ap_prog(run_id, frames_done=frames_ok + frames_fail,
-                     frames_failed=frames_fail,
-                     last_image_url=rec.get("image_url"))
+            _fr_kw = {"frames_done": frames_ok + frames_fail,
+                      "frames_failed": frames_fail}
+            if rec.get("image_url"):
+                _fr_kw["last_image_url"] = rec["image_url"]
+            _ap_prog(run_id, **_fr_kw)
         except Exception as ex:
             frames_fail += 1
             msg = str(ex)

@@ -115,8 +115,11 @@ DEEPGRAM_BASE_URL = _get("DEEPGRAM_BASE_URL", "https://api.deepgram.com/v1")
 # speaker (e.g. aura-2-thalia-en = Aura 2 engine, Thalia voice, English).
 DEEPGRAM_MODEL = _get("DEEPGRAM_MODEL", "aura-2-thalia-en")
 DEEPGRAM_VOICE_ID = _get("DEEPGRAM_VOICE_ID", "aura-2-thalia-en")
-# Output container — "mp3" is the safest cross-app default.
-DEEPGRAM_ENCODING = _get("DEEPGRAM_ENCODING", "mp3")
+# Output container. linear16/WAV @ 24kHz is LOSSLESS — Aura's native sample
+# rate — so the voice stays crisp through the pipeline's ffmpeg concat/mux
+# (mp3-on-mp3 re-encodes muddy the sound and Aura's soft consonants suffer
+# most). The final video mux re-encodes to AAC once, so we never ship raw WAV.
+DEEPGRAM_ENCODING = _get("DEEPGRAM_ENCODING", "wav")
 
 # --- Piper TTS (LOCAL, 100% free, runs on CPU/GPU on your machine) -----------
 # Piper is an open-source ONNX neural TTS engine. Zero API cost, runs entirely

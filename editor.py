@@ -80,19 +80,52 @@ def probe_duration(path: str) -> float:
 
 
 def trim_silence(input_path: str, output_path: str = None,
-                 threshold_db: int = -35, min_dur: float = 0.15) -> str:
-    """Strip leading and trailing silence from an audio file using ffmpeg
-    silenceremove. Keeps a tiny pad (``min_dur`` s) so words don't clip.
-    Returns the output path (overwrites in-place if ``output_path`` is None)."""
+                 threshold_db: int = -50, min_dur: float = 0.30,
+                 lead_pad_ms: int = 80, trim_start: bool = False) -> str:
+    """Strip trailing silence (and OPTIONALLY leading silence) from an audio
+    file using ffmpeg silenceremove, then add a small ``lead_pad_ms`` of
+    silence at the start so the first phoneme isn't right at t=0 (which can
+    collide with the encoder pre-skip / decoder warm-up and sound like a
+    clipped initial syllable). Returns the output path (overwrites in-place if
+    ``output_path`` is None).
+
+    ``trim_start`` defaults to **False** on purpose. Aura/Deepgram clips often
+    open on a soft, slow-attack consonant or breath whose amplitude ramps up
+    gradually; an aggressive start-trim (silenceremove start_periods=1) bites
+    into that onset and the first WORD of every scene comes back clipped —
+    exactly the "cut initial lines" symptom. We now keep the natural head of
+    the clip and only strip dead air from the TAIL (which never carries
+    speech) plus add the lead cushion. Pass ``trim_start=True`` only for a
+    source you know has a long hard-silent intro.
+
+    Threshold defaults to -50 dB (only TRUE silence, not low-amplitude soft
+    consonants like S/F/H/Th) and the minimum silence window is 300 ms so
+    we don't chop within natural sentence pauses. Loudness/clarity of the
+    speech itself is preserved; we ONLY remove dead air at the edges.
+    """
     out = output_path or (input_path + ".trimmed.mp3")
-    af = (
-        f"silenceremove=start_periods=1:start_duration={min_dur}:"
-        f"start_threshold={threshold_db}dB:"
-        f"stop_periods=-1:stop_duration={min_dur}:"
-        f"stop_threshold={threshold_db}dB"
+    pad_s = max(0.0, float(lead_pad_ms or 0)) / 1000.0
+    parts = []
+    # Start-trim is OPT-IN: by default we never touch the head of the clip so
+    # the first syllable is never eaten. Tail-trim is always safe (no speech).
+    if trim_start:
+        parts.append(
+            f"silenceremove=start_periods=1:start_duration={min_dur}:"
+            f"start_threshold={threshold_db}dB:detection=peak"
+        )
+    parts.append(
+        f"silenceremove=stop_periods=-1:stop_duration={min_dur}:"
+        f"stop_threshold={threshold_db}dB:detection=peak"
     )
+    af = ",".join(parts)
+    # adelay puts ``pad_s`` of silence in front so the speech onset isn't on
+    # sample 0. ``apad=pad_dur`` adds the same tail cushion so concat/atempo
+    # don't truncate the last consonant.
+    if pad_s > 0:
+        delay_ms = int(round(pad_s * 1000))
+        af += f",adelay={delay_ms}|{delay_ms},apad=pad_dur={pad_s}"
     cmd = ["ffmpeg", "-y", "-i", input_path, "-af", af,
-           "-c:a", "libmp3lame", "-q:a", "4", out]
+           "-c:a", "libmp3lame", "-q:a", "2", out]
     proc = _run(cmd, timeout=_RENDER_TIMEOUT, what="ffmpeg trim-silence")
     if proc.returncode != 0 or not os.path.exists(out):
         return input_path
