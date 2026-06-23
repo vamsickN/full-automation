@@ -4252,7 +4252,7 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
                       sound_design=False, smart_edit=True,
                       cut_clicks=False, cut_click_volume=0.30,
                       cut_click_style="click", manual_holds=None,
-                      target_seconds=None):
+                      target_seconds=None, force_continuous=False):
     """Shared engine for the natural-flow video. Returns
     (edit_rec, video_url, total_seconds, scene_map). Mutates + saves `st`.
 
@@ -4301,6 +4301,7 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
     # far tighter A/V sync than estimating from word counts. ElevenLabs keeps the
     # single-track + timestamps path (its timestamps are already frame-exact).
     url = None
+    _continuous_error = None  # capture the reason for loud logging / force mode
     if provider != "elevenlabs":
         # PREFERRED: one continuous narration track (natural prosody, no gaps),
         # with frame timing recovered from Whisper word timestamps. This is the
@@ -4311,12 +4312,26 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
                 vc, tts_lines, name_hint,
                 settings=(request.state.settings if request else None))
         except Exception as _ce:
+            _continuous_error = str(_ce)
             print(f"[video] continuous-track path errored ({_ce})", flush=True)
             _cont = None
         if _cont:
             path, url, dur, measured_holds = _cont
             print(f"[video] continuous flow: {len(measured_holds)} frames over "
                   f"{dur:.2f}s (no inter-scene pauses)", flush=True)
+        elif force_continuous:
+            # User explicitly asked for continuous track (Build Video button).
+            # Don't silently fall back to the choppy per-scene method — that's
+            # the bug they're trying to fix. Tell them WHY it failed so they can
+            # fix the root cause (Whisper missing, synth error, drift, etc.).
+            _reason = _continuous_error or (
+                "Whisper not available" if not transcribe.local_available()
+                else "transcription/drift check failed")
+            raise HTTPException(
+                500,
+                f"Continuous voice-over failed: {_reason}. "
+                f"Install faster-whisper (pip install faster-whisper) or "
+                f"switch to ElevenLabs voice in Settings.")
         else:
             # FALLBACK: per-scene synth (only when Whisper isn't installed). This
             # still syncs but pads each clip with trailing silence between scenes.
@@ -8020,6 +8035,7 @@ class BuildVideoIn(BaseModel):
     cut_click_volume: float = 0.30
     cut_click_style: str = "click"
     manual_holds: Optional[List[float]] = None   # per-frame seconds from Review popup
+    force_continuous: bool = True   # always synth ONE continuous track (no per-scene chop)
 
 
 @app.post("/api/build-video")
@@ -8044,7 +8060,8 @@ def api_build_video(body: BuildVideoIn, request: Request):
         fps=body.fps, max_hold=body.max_hold, motion=body.motion,
         name_hint="build_video", sound_design=body.sound_design,
         cut_clicks=body.cut_clicks, cut_click_volume=body.cut_click_volume,
-        cut_click_style=body.cut_click_style, manual_holds=body.manual_holds)
+        cut_click_style=body.cut_click_style, manual_holds=body.manual_holds,
+        force_continuous=body.force_continuous)
     return {"ok": True, "video_url": video_url, "duration": total_seconds,
             "frames": len(seq), "scene_map": scene_map}
 

@@ -6680,7 +6680,8 @@ async function apBuildVideo(){
   try{
     const d=await api("/api/build-video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sound_design:true,
       cut_clicks:!($("#apClicks")&&!$("#apClicks").checked),
-      cut_click_style:($("#apClickStyle")||{}).value||"click"})});
+      cut_click_style:($("#apClickStyle")||{}).value||"click",
+      force_continuous:true})});
     if(d.video_url){
       STATE=await api("/api/state").then(r=>r.state);
       renderEditsList();
@@ -6792,7 +6793,8 @@ async function reviewRerender(){
   try{
     const body={ sound_design:!!$("#rvSfx").checked,
       cut_clicks:!!$("#rvClicks").checked,
-      cut_click_style:($("#apClickStyle")||{}).value||"click" };
+      cut_click_style:($("#apClickStyle")||{}).value||"click",
+      force_continuous:true };
     // send the user's per-frame durations only if they touched a slider; the
     // backend scales them to the narration length so audio stays in sync.
     if(RV.manual){
