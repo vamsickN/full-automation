@@ -419,7 +419,7 @@ def ingest(url: str, max_frames: int = 12) -> dict:
     source = "frames"
     notes = ""
     if not frames:
-        # Last resort: one thumbnail still.
+        # Fallback: one thumbnail still.
         tb = thumbnail_bytes(vid, meta.get("thumbnail", ""))
         if tb:
             web, _p = store.write_binary("frames", tb, ext="jpg",
@@ -430,6 +430,8 @@ def ingest(url: str, max_frames: int = 12) -> dict:
                      "retries (YouTube is hard-blocking this network); used the "
                      "thumbnail only — STYLE COPYING WILL BE WEAK. Re-run the "
                      "analysis in a few minutes, or try a VPN, for real frames.")
+            print(f"[youtube] ALL fallbacks exhausted for {vid} — "
+                  f"returning 1 thumbnail (style will be weak)", flush=True)
         else:
             source = "none"
             notes = "Couldn't fetch frames or thumbnail; analysis uses transcript only."
