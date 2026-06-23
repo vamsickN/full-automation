@@ -1400,7 +1400,7 @@
             </div>
             <div style="min-width:130px">
               <label class="label" style="margin:0 0 4px">Pacing (s/img)</label>
-              <input type="number" id="apPacing" value="1" min="0.5" max="10" step="0.5" style="width:100px" title="Seconds each image is on screen. 1 = 1 image per second. Determines number of frames = length ÷ pacing."/>
+              <input type="number" id="apPacing" value="1.5" min="0.5" max="10" step="0.5" style="width:100px" title="Seconds each image is on screen. 1 = 1 image per second. Determines number of frames = length ÷ pacing."/>
             </div>
             <div style="min-width:220px">
               <label class="label" style="margin:0 0 4px">Voice</label>
@@ -1894,7 +1894,7 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
             <option value="">let Claude pick</option>
           </select>
         </div>
-        <label class="toggle" id="tgMotion" onclick="toggle('tgMotion')" style="flex:1; min-width:200px; align-self:end">
+        <label class="toggle on" id="tgMotion" onclick="toggle('tgMotion')" style="flex:1; min-width:200px; align-self:end">
           <span class="switch"></span>
           <span class="tx">Ken Burns motion<small>slow zoom on every still</small></span>
         </label>
@@ -1971,7 +1971,7 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
           <div class="bc-tag" style="color:var(--teal)">🌊 Natural flow · recommended</div>
           <p class="hint" style="margin:8px 0 12px">Keeps the voice-over as <strong>one continuous, natural track</strong> (never chopped or slowed) and times the frames to it. Any frame that would sit too long is broken into <strong>micro-cuts</strong>.</p>
           <label class="label" style="margin:0 0 4px">Max time on one frame before micro-cuts (sec)</label>
-          <input type="number" id="flowMaxHold" value="2.5" min="1" max="20" step="0.5" style="width:120px; margin-bottom:8px"/>
+          <input type="number" id="flowMaxHold" value="1.5" min="1" max="20" step="0.5" style="width:120px; margin-bottom:8px"/>
           <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:10px;cursor:pointer"><input type="checkbox" id="flowSfx" checked/> 🔊 ElevenLabs sound design (rumble + booms + loud mix)</label>
           <button class="btn glow btn-primary" id="voFlowBtn" onclick="genVoiceoverFlow()" style="width:100%; justify-content:center">🌊 Build natural-flow video</button>
         </div>
@@ -5441,7 +5441,7 @@ function _clickOpts(){
   const on = $("#tgCutClick") ? isOn("tgCutClick") : false;
   return { cut_clicks:on,
     cut_click_volume:parseFloat(($("#cutClickVol")||{}).value)||0.3,
-    cut_click_style:($("#cutClickStyle")||{}).value||"click" };
+    cut_click_style:($("#cutClickStyle")||{}).value||"whoosh" };
 }
 function _videoOpts(){
   return { motion:isOn("tgMotion"), music:isOn("tgUseMusic"),
@@ -6535,7 +6535,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
   $("#apStopBtn").style.display="inline-flex"; $("#apRegenBtn").style.display="none";
   try{
     const cut_clicks=!($("#apClicks")&&!$("#apClicks").checked);
-    const cut_click_style=($("#apClickStyle")||{}).value||"click";
+    const cut_click_style=($("#apClickStyle")||{}).value||"whoosh";
     const keep_style=!($("#apMyStyle")&&!$("#apMyStyle").checked);
     const angle_variety=!($("#apAngles")&&!$("#apAngles").checked);
     // Network-resilient run: the autopilot is ONE long POST. If the connection
@@ -6759,7 +6759,7 @@ async function apBuildVideo(){
   try{
     const d=await api("/api/build-video",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sound_design:true,
       cut_clicks:!($("#apClicks")&&!$("#apClicks").checked),
-      cut_click_style:($("#apClickStyle")||{}).value||"click",
+      cut_click_style:($("#apClickStyle")||{}).value||"whoosh",
       force_continuous:true})});
     if(d.video_url){
       STATE=await api("/api/state").then(r=>r.state);
@@ -6872,7 +6872,7 @@ async function reviewRerender(){
   try{
     const body={ sound_design:!!$("#rvSfx").checked,
       cut_clicks:!!$("#rvClicks").checked,
-      cut_click_style:($("#apClickStyle")||{}).value||"click",
+      cut_click_style:($("#apClickStyle")||{}).value||"whoosh",
       force_continuous:true };
     // send the user's per-frame durations only if they touched a slider; the
     // backend scales them to the narration length so audio stays in sync.
@@ -7218,7 +7218,7 @@ function wfWireNode(el,n){
       else if(act==="sync"){
         if(!((STATE&&STATE.sequence||[]).length)){ toast("Render some frames first (Sequence node).","err"); }
         else{
-          const d=await api("/api/voiceover/auto-synced",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({transition:"cut",cut_clicks:!($("#apClicks")&&!$("#apClicks").checked),cut_click_style:($("#apClickStyle")||{}).value||"click"})});
+          const d=await api("/api/voiceover/auto-synced",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({transition:"cut",cut_clicks:!($("#apClicks")&&!$("#apClicks").checked),cut_click_style:($("#apClickStyle")||{}).value||"whoosh"})});
           STATE=await api("/api/state").then(r=>r.state);
           renderEditsList(); wfRenderLatestSync(el);
           toast(`Synced ${(d.scenes||[]).length} shots to the voice · ${d.total_duration||0}s`,"ok");

@@ -6373,7 +6373,7 @@ class AutopilotIn(BaseModel):
     height: int = 1080
     fps: int = 30
     transition: str = "cut"
-    motion: bool = False
+    motion: bool = True                # Ken Burns slow zoom on every still
     quality: Optional[str] = None
     size: Optional[str] = None
     model: Optional[str] = None        # Claude model override
@@ -6381,7 +6381,7 @@ class AutopilotIn(BaseModel):
     target_seconds: Optional[float] = None  # desired video length target
     run_id: Optional[str] = None       # client token so a run can be stopped
     step_timeout: float = 300.0        # auto-proceed if a heavy step stalls past this
-    max_hold: float = 2.5              # split frames longer than this into micro-cuts
+    max_hold: float = 1.5              # split frames longer than this into micro-cuts
     from_cache: bool = False           # reuse the topics from a prior /suggest call
                                        # so the picked index maps to what the user saw
     sound_design: bool = True          # generate + mix ElevenLabs SFX + loudnorm
@@ -6390,7 +6390,7 @@ class AutopilotIn(BaseModel):
                                        # before generating so they don't mix
     orientation: Optional[str] = None  # "vertical" (9:16 Shorts), "square", or
                                        # "landscape" (default) — sets frame + video size
-    pacing_seconds: Optional[float] = None   # override AI-suggested pacing (s/image)
+    pacing_seconds: Optional[float] = 1.5  # seconds per image — 1.5 = fast cuts
     num_characters: Optional[int] = None     # override AI-suggested character count
     smart_edit: bool = True            # use Claude to audio-sync image holds
     angle_variety: bool = True         # cycle camera angles per frame (micro-cuts)
@@ -6400,7 +6400,7 @@ class AutopilotIn(BaseModel):
                                        # from the analysed video
     cut_clicks: bool = True            # ElevenLabs click on every frame change
     cut_click_volume: float = 0.30
-    cut_click_style: str = "click"     # click | camera | whoosh | pop | tick
+    cut_click_style: str = "whoosh"    # click | camera | whoosh | pop | tick
     resume: bool = False               # CONTINUE an interrupted run: reuse the
                                        # script/characters/frames/video already
                                        # on disk and only do the missing steps,
