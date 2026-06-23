@@ -4847,8 +4847,18 @@ async function analyzeYTMulti(){
     renderYTASuggestions();
     showThumbStudio(d);
     const ok = (d.sources||[]).length, bad = (d.errors||[]).length;
-    toast(`${YTA_SUGG.length} topics from ${ok} video${ok>1?"s":""}${bad?` (${bad} skipped)`:""}`,"ok");
-    confettiBurst();
+    // Surface a degraded-analysis warning loudly. When the model 429s / quota-
+    // fails / returns unparseable JSON, the backend falls back to generic
+    // "inspired by" cards with NO cast — show WHY instead of a misleading
+    // "10 topics ✓" success toast over empty topics.
+    if(d.warning){
+      toast(d.warning, "err");
+      const _ae=$("#ytaEmpty");
+      if(_ae){ _ae.style.display="block"; _ae.textContent=d.warning; }
+    } else {
+      toast(`${YTA_SUGG.length} topics from ${ok} video${ok>1?"s":""}${bad?` (${bad} skipped)`:""}`,"ok");
+      confettiBurst();
+    }
   }catch(e){
     grid.innerHTML="";
     $("#ytaEmpty").style.display="block";

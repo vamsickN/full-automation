@@ -2384,18 +2384,33 @@ def _deep_analyze_urls(urls, nudge, model, request, n_suggestions=10):
             if not _suggestions_need_fix(sugs2) or len(sugs2) > len(sugs):
                 data, sugs = data2, sugs2
         if _suggestions_need_fix(sugs):
-            # Third attempt with a SIMPLER schema — drop the rich fields and ask
-            # only for the bare minimum a card needs. Easier for the model to
-            # honour when it keeps mangling the full schema.
+            # Third attempt with a SIMPLER schema — drop the rich analysis fields
+            # but KEEP cast: title, logline, virality_score AND the characters
+            # array. The cards show "N cast" and the script step needs the cast,
+            # so stripping characters here is what produced the "0 cast" topics.
             data3 = _ask(
                 "\n\nSIMPLIFIED OUTPUT: return \"suggestions\" as an array of "
                 "objects with ONLY these keys: title (string), logline (one "
-                "sentence), virality_score (INTEGER 1-100). Nothing else is "
-                "required. Sort most-viral first. JSON only.")
+                "sentence), virality_score (INTEGER 1-100), num_characters "
+                "(INTEGER 0-8) and characters (array of {name, sheet_prompt}). "
+                "If the video is pure narration with no recurring on-screen "
+                "character, num_characters is 0 and characters is []. Otherwise "
+                "include every recurring character. Sort most-viral first. "
+                "JSON only.")
             sugs3 = _normalize_suggestions(data3.get("suggestions"))
             if not _suggestions_need_fix(sugs3) or len(sugs3) > len(sugs):
                 # Keep the richer analysis axes from the best earlier attempt
-                # but take the simpler-schema suggestions.
+                # but take the simpler-schema suggestions. Back-fill cast from
+                # the matching earlier suggestion if this attempt dropped it, so
+                # a model that ignored the characters key doesn't cost the cast.
+                for i, s3 in enumerate(sugs3):
+                    if not (s3.get("characters") or []):
+                        _prev = sugs[i] if i < len(sugs) else {}
+                        if _prev.get("characters"):
+                            s3["characters"] = _prev["characters"]
+                            s3.setdefault("num_characters",
+                                          _prev.get("num_characters")
+                                          or len(_prev["characters"]))
                 data = data or data3
                 sugs = sugs3
     except HTTPException:
