@@ -2935,10 +2935,12 @@ async function api(path, opts={}){
   // Safe log: don't crash on non-JSON body strings
   try{ console.log("[api]", method, path, opts.body && typeof opts.body === "string" ? JSON.parse(opts.body) : opts.body || ""); }catch(_){ console.log("[api]", method, path, "<body>"); }
   // Timeout via AbortController — prevents hung connections from blocking
-  // the UI forever. Autopilot POSTs can legitimately take 10+ minutes, so we
-  // use a generous per-request timeout (5 min for GET, 15 min for POST).
+  // the UI forever. Autopilot POSTs can legitimately take 30+ minutes (each
+  // gpt-image edit through derouter runs 60-150s × 15+ frames), so we use a
+  // very generous POST timeout. The work is checkpointed + resumable on the
+  // server anyway, so even if this fires the run continues and Continue resumes.
   const isPost = method === "POST" || method === "PUT" || method === "PATCH";
-  const timeoutMs = isPost ? 900000 : 300000;
+  const timeoutMs = isPost ? 3600000 : 300000;   // 60 min POST / 5 min GET
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   opts.signal = ac.signal;
@@ -3321,7 +3323,7 @@ async function resumeProject(id){
     // panel, drive the existing poll loop. Reusing the runAutopilot UI
     // (apPaint, #apProgress, etc.) means no duplicated progress plumbing.
     // Network-retry loop: auto-reconnect on Network error (same as runAutopilot).
-    const AP_MAX_NET_RETRIES=4;
+    const AP_MAX_NET_RETRIES=10;
     let d=null, _netTries=0;
     while(true){
       try{
@@ -6491,7 +6493,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
     // with resume:true so the server skips everything already done and finishes
     // only the missing tail. Up to AP_MAX_NET_RETRIES reconnect attempts.
     const _basePayload={url,urls,nudge,target_seconds,voice_id,run_id:AP_RUN_ID,step_timeout,suggestion_index:idx,from_cache:fromCache,orientation,sound_design,pacing_seconds,num_characters,smart_edit,cut_clicks,cut_click_style,keep_style,angle_variety};
-    const AP_MAX_NET_RETRIES=4;
+    const AP_MAX_NET_RETRIES=10;
     let d=null, _netTries=0, _resume=resume;
     while(true){
       try{

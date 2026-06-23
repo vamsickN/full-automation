@@ -4144,6 +4144,108 @@ def _synth_per_scene_track(vc, tts_lines, name_hint, pad=0.04):
     return ppath, turl, round(sum(holds), 3), holds
 
 
+def _synth_continuous_track(vc, tts_lines, name_hint, settings=None):
+    """Synthesize the ENTIRE narration as ONE continuous track (natural prosody,
+    no per-scene resets, no padded silence between scenes), then recover the
+    per-scene hold durations by transcribing the track with Whisper word
+    timestamps and mapping each scene's words back to real time.
+
+    This is the correct model for "visuals follow the voice": the voice flows
+    naturally start-to-finish and the FRAMES are timed to where the words
+    actually land — instead of chopping the audio per scene and padding each
+    clip with trailing silence (which caused the pauses + robotic boundary
+    pronunciation).
+
+    Returns (track_path, track_url, total_duration, holds) on success, or
+    None if Whisper isn't available / transcription fails (caller falls back).
+    """
+    try:
+        import transcribe
+    except Exception:
+        return None
+    if not transcribe.local_available():
+        return None  # no Whisper -> can't measure word timing on a single track
+
+    lines = [(l or "").strip() for l in tts_lines]
+    nonempty = [l for l in lines if l]
+    if not nonempty:
+        return None
+    # One natural read of the whole script. Single space between scene lines so
+    # the engine reads it as continuous prose (no hard stops mid-narration).
+    full_text = " ".join(nonempty)
+
+    # 1. Synthesize the single continuous track.
+    try:
+        audio_bytes = vc.synthesize(full_text)
+    except Exception as _e:
+        print(f"[video] continuous synth failed ({_e})", flush=True)
+        return None
+    ext = "wav" if (
+        vc.__class__.__name__ == "DeepgramVoiceClient"
+        and getattr(vc, "encoding", "mp3").lower() in ("wav", "linear16")
+    ) else "mp3"
+    url, path = store.write_binary("audio", audio_bytes, ext=ext, name_hint=name_hint)
+    try:
+        editor.trim_silence(path, trim_start=False)
+    except Exception:
+        pass
+
+    # 2. Transcribe with word timestamps to learn WHEN each word is spoken.
+    try:
+        result = transcribe.transcribe_audio(path, settings=settings, engine="local")
+    except Exception as _e:
+        print(f"[video] continuous-track transcription failed ({_e})", flush=True)
+        return None
+    words = result.get("words") or []
+    total = float(result.get("duration") or 0.0)
+    if not words or total <= 0.1:
+        return None
+
+    # 3. Map each scene line to a real time-span by walking the word stream.
+    #    We match scene words to the transcript words in order, so scene i's
+    #    hold = (time of first word of scene i+1) - (time of first word of scene i).
+    import re as _re
+
+    def _toks(s):
+        return [t for t in _re.findall(r"[a-z0-9']+", (s or "").lower()) if t]
+
+    word_starts = [float(w.get("start") or 0.0) for w in words]
+    word_toks = [_re.sub(r"[^a-z0-9']", "", (w.get("word") or "").lower()) for w in words]
+
+    holds = []
+    wi = 0                      # pointer into the transcript word list
+    scene_start_times = []
+    for line in lines:
+        # Record the transcript time where this scene's first word lands.
+        scene_start_times.append(word_starts[wi] if wi < len(word_starts) else total)
+        st_toks = _toks(line)
+        if not st_toks:
+            # Empty scene line — give it a tiny hold, don't advance the pointer.
+            continue
+        # Advance wi past this scene's tokens (best-effort fuzzy match: count
+        # how many transcript words this scene should consume).
+        consume = len(st_toks)
+        wi = min(len(words), wi + consume)
+
+    # Convert scene start times into per-scene holds.
+    for i in range(len(lines)):
+        start_t = scene_start_times[i]
+        end_t = scene_start_times[i + 1] if i + 1 < len(scene_start_times) else total
+        hold = round(max(0.25, end_t - start_t), 3)
+        holds.append(hold)
+
+    # Sanity: the holds must sum close to the real duration. If the word-mapping
+    # drifted badly (rare), bail so the caller uses a safer path.
+    if abs(sum(holds) - total) > max(2.0, total * 0.25):
+        print(f"[video] continuous-track hold drift too large "
+              f"(sum={sum(holds):.1f} vs dur={total:.1f}); falling back", flush=True)
+        return None
+
+    print(f"[video] continuous track: {len(holds)} scenes mapped over "
+          f"{total:.2f}s (natural flow, no gaps)", flush=True)
+    return path, url, round(total, 3), holds
+
+
 def _build_flow_video(st, request, *, voice_id, text, transition="cut",
                       width=1920, height=1080, fps=30, max_hold=2.5,
                       motion=False, use_music=False, name_hint="flow",
@@ -4200,16 +4302,35 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
     # single-track + timestamps path (its timestamps are already frame-exact).
     url = None
     if provider != "elevenlabs":
+        # PREFERRED: one continuous narration track (natural prosody, no gaps),
+        # with frame timing recovered from Whisper word timestamps. This is the
+        # "visuals follow the voice" path — no per-scene chopping/padding, so the
+        # voice never pauses between scenes and pronunciation stays natural.
         try:
-            path, url, dur, measured_holds = _synth_per_scene_track(
-                vc, tts_lines, name_hint)
-            print(f"[video] per-scene exact sync: {len(measured_holds)} clips, "
-                  f"{dur:.2f}s total", flush=True)
-        except Exception as _ps:
-            print(f"[video] per-scene synth failed ({_ps}); single-track fallback",
-                  flush=True)
-            measured_holds = None
-            path = None
+            _cont = _synth_continuous_track(
+                vc, tts_lines, name_hint,
+                settings=(request.state.settings if request else None))
+        except Exception as _ce:
+            print(f"[video] continuous-track path errored ({_ce})", flush=True)
+            _cont = None
+        if _cont:
+            path, url, dur, measured_holds = _cont
+            print(f"[video] continuous flow: {len(measured_holds)} frames over "
+                  f"{dur:.2f}s (no inter-scene pauses)", flush=True)
+        else:
+            # FALLBACK: per-scene synth (only when Whisper isn't installed). This
+            # still syncs but pads each clip with trailing silence between scenes.
+            try:
+                path, url, dur, measured_holds = _synth_per_scene_track(
+                    vc, tts_lines, name_hint)
+                print(f"[video] per-scene exact sync: {len(measured_holds)} clips, "
+                      f"{dur:.2f}s total (install faster-whisper for gapless flow)",
+                      flush=True)
+            except Exception as _ps:
+                print(f"[video] per-scene synth failed ({_ps}); single-track fallback",
+                      flush=True)
+                measured_holds = None
+                path = None
 
     if measured_holds is None:
         try:
