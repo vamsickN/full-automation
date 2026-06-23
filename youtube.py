@@ -304,6 +304,23 @@ def ingest(url: str, max_frames: int = 12) -> dict:
 
     frames, _path = download_frames(url, max_frames=max_frames,
                                     duration_hint=meta.get("duration", 0))
+    # YouTube throttles frame downloads from some IPs transiently — the first
+    # attempt returns nothing, a retry seconds later succeeds. Without this the
+    # pipeline silently falls back to a SINGLE thumbnail as the only style
+    # anchor, which gives the image model far too weak a read of the source art
+    # style → "the generated video is a completely different style". Retry the
+    # real frame download up to 2 more times before settling for the thumbnail.
+    if not frames:
+        import time as _time
+        for _attempt in range(2):
+            _time.sleep(3 * (_attempt + 1))
+            _log(f"frame download empty — retry {_attempt + 1}/2 for {vid}")
+            frames, _path = download_frames(
+                url, max_frames=max_frames,
+                duration_hint=meta.get("duration", 0))
+            if frames:
+                _log(f"retry {_attempt + 1} succeeded: {len(frames)} frames")
+                break
     source = "frames"
     notes = ""
     if not frames:
@@ -314,8 +331,10 @@ def ingest(url: str, max_frames: int = 12) -> dict:
                                          name_hint=f"ytthumb_{vid}")
             frames = [web]
             source = "thumbnail"
-            notes = ("Couldn't download the video (likely blocked); used the "
-                     "thumbnail for visual style.")
+            notes = ("Couldn't download the video after retries (YouTube is "
+                     "throttling/blocking this network); used the thumbnail "
+                     "only — STYLE COPYING WILL BE WEAK. Re-run the analysis "
+                     "in a few minutes, or try a VPN, to get real video frames.")
         else:
             source = "none"
             notes = "Couldn't fetch frames or thumbnail; analysis uses transcript only."
