@@ -823,6 +823,70 @@ both sides equal the sentinel, so `from_cache` stays true and
 Backend `/api/autopilot/from-upload` already returns `suggestions`
 (default `n_suggestions=10`); the gap was purely frontend.
 
+### 27. PROTAGONIST LOCK — predator/other-animal scenes must not replace the hero
+
+User symptom (elephant video): a short about a baby elephant rendered scenes
+with the WRONG animal as the subject — "Predators smell newborns" showed
+standalone leopards, "May be poisoned" showed a lone cheetah cub, "The desert
+swallows grass" showed a leopard with no elephant. The hero vanished whenever
+the VO/scene prompt mentioned another animal. Plus a recurring anatomy glitch:
+the baby elephant's trunk rendered as a pig-like pink nostril disc.
+
+Root cause: when a scene's prompt described a predator ("a leopard prowls…"),
+the image model made the PREDATOR the central subject and dropped the
+protagonist entirely. Nothing in the prompt pinned the hero as mandatory.
+
+**Fix in place (do not undo):**
+- `pipeline.build_full_prompt(..., protagonist="")` — new param. When set (or
+  derivable from the matched character sheets), it injects a `PROTAGONIST LOCK
+  (CRITICAL)` block: the named hero MUST be the central subject of EVERY frame;
+  any predator/other animal/person named in the prompt is a SECONDARY element
+  shown TOGETHER WITH the hero, NEVER a replacement, NEVER rendered alone.
+- The CHARACTER REFERENCES block also forbids morphing the cast into a
+  different animal or contradicting the sheet anatomy.
+- `app._project_protagonist(st)` resolves the hero: `st['protagonist']` →
+  first 2 named character sheets → `yt_inspiration.subject`. Threaded into ALL
+  THREE `build_full_prompt` call sites.
+- Autopilot STEP 3 seeds `st['protagonist']` from the script `characters`
+  (first 2 names) or the title; logs `[autopilot] protagonist lock: <names>`.
+
+**General pattern:** the image model treats the most-vivid noun in a prompt as
+the subject. With a fixed protagonist you MUST pin it in every frame prompt, or
+"scene mentions X" silently becomes "scene IS X".
+
+### 28. Thumbnail double-title / watermark text — model must render ZERO text
+
+User symptom: the thumbnail title appeared TWICE (baked into the art, cropped
+to "WHY IT"/"BORN", PLUS the bottom overlay) + a stray "ELEPHANT" watermark.
+
+Root cause: the prompt told the model to "keep negative space for a title
+overlay" but the model rendered title text INTO the image anyway; then
+`_overlay_text()` baked the title AGAIN → double title.
+
+**Fix:** thumbnail prompt now has a HARD no-text ban ("ABSOLUTELY NO TEXT … any
+text is a failure"). Pillow overlay is the ONLY text source. `_overlay_text`
+upgraded premium: big UPPERCASE (`W//9`), one gold-accented keyword, heavy
+stroke + drop shadow, stronger/taller scrim; autopilot uses `position="top"`.
+Testing the overlay on an OLD raw image may still show old baked text — that's
+the old ART, re-render with the new prompt to verify.
+
+### 29. Cast vs Rendered-Frames must be SEPARATE premium UI boxes
+
+User ask: "rendered frames and character sheet frames should be in different
+boxes, premium / satisfying to watch."
+
+**Fix:** TWO frontend boxes — `#apCast` ("Cast — Character Sheets", 1:1 cards,
+name label, gold gradient) and `#apGallery` ("Rendered Frames", 16:9 cards, #N
+badge). Rounded corners, drop shadow, hover lift. `apPaint()` appends NEW items
+only (no per-poll rebuild → no flicker). Backend `_ap_prog` has a NEW
+`recent_characters` accumulator (`{url,name}`, `[-50:]`) separate from
+`recent_frames`; the char step feeds `last_character` (NOT `last_image_url`) so
+sheets never leak into the frames gallery. `/api/autopilot/progress/<id>`
+returns both lists.
+
+**Pitfall:** routing a sheet URL through `last_image_url` mixes it into
+`recent_frames`. Keep sheet URLs out of `last_image_url`; use `last_character`.
+
 ### 26. Build Video must force continuous-track voiceover (no silent per-scene fallback)
 
 User symptom: old projects rendered with the per-scene chop method (pauses
