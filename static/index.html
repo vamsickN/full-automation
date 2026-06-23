@@ -4538,7 +4538,7 @@ function renderBoard(){
           ${cont}${cast}
         </div>
         <div class="foot">
-          <a class="btn outline sm" href="${_esc(s.image_url)}" download>Download</a>
+          <a class="btn outline sm" href="javascript:void(0)" onclick="saveAsDownload('${_esc(s.image_url)}','${_esc((s.image_url||'').split('/').pop()||'image.png')}')">Download</a>
           <button class="btn outline sm" onclick="reroll('${s.id}', this)">↻ Re-roll</button>
           <button class="btn outline sm" onclick="openVariants('${s.id}', this)">⊞ Variants</button>
           <button class="btn outline sm" onclick="openInpaint('${s.id}')">🖌 Inpaint</button>
@@ -5307,6 +5307,50 @@ function pushCharsToBulk(){
   toast(`${chars.length} character prompt(s) loaded — click “Generate all sheets”`,"ok");
   setTimeout(()=>$("#charBatch").scrollIntoView({behavior:"smooth",block:"center"}),100);
 }
+/* ── Save-As download helper ──────────────────────────────────────────── */
+/* Uses the File System Access API (Chromium) to show a native "Save As"
+   dialog before downloading. Falls back to normal <a download> click. */
+async function saveAsDownload(url, defaultName){
+  // Extract filename from URL if not provided
+  if(!defaultName){
+    try{ const u=new URL(url,location.origin); defaultName=u.pathname.split('/').pop(); }catch(_){ defaultName='download'; }
+  }
+  // Try File System Access API (Chrome/Edge 86+)
+  if(window.showSaveFilePicker){
+    try{
+      const ext=defaultName.split('.').pop().toLowerCase();
+      const types=({
+        'mp4':[{description:'Video',accept:{'video/mp4':['.mp4']}}],
+        'zip':[{description:'ZIP Archive',accept:{'application/zip':['.zip']}}],
+        'srt':[{description:'Subtitles',accept:{'text/plain':['.srt']}}],
+        'png':[{description:'Image',accept:{'image/png':['.png']}}],
+        'jpg':[{description:'Image',accept:{'image/jpeg':['.jpg','.jpeg']}}],
+        'jpeg':[{description:'Image',accept:{'image/jpeg':['.jpg','.jpeg']}}],
+        'webp':[{description:'Image',accept:{'image/webp':['.webp']}}],
+        'json':[{description:'JSON',accept:{'application/json':['.json']}}],
+      })[ext]||[{description:'File',accept:{'application/octet-stream':['.'+ext]}}];
+      const handle=await window.showSaveFilePicker({suggestedName:defaultName,types});
+      toast('Downloading…','ok');
+      const resp=await fetch(url);
+      if(!resp.ok){ toast('Download failed: '+resp.status,'err'); return; }
+      const writable=await handle.createWritable();
+      await resp.body.pipeTo(writable);
+      toast('Saved ✓','ok');
+      return;
+    }catch(e){
+      // User cancelled the dialog — don't fallback, just stop
+      if(e.name==='AbortError') return;
+      // Other errors — fall through to normal download
+      console.warn('saveAsDownload failed, falling back:',e);
+    }
+  }
+  // Fallback: normal browser download (goes to Downloads folder)
+  const a=document.createElement('a');
+  a.href=url; a.download=defaultName||'';
+  document.body.appendChild(a); a.click();
+  setTimeout(()=>a.remove(),1000);
+}
+
 function downloadPackage(){
   $("#uiModal").classList.add("wide");
   const rows=[["script","Script (script.json)"],["prompts","Prompts — scene + character + master"],["characters","Character sheets (images)"],["frames","Rendered frames (images)"],["voiceover","Voice-over (text + mp3)"],["video","Assembled videos"]];
@@ -5318,7 +5362,7 @@ function downloadPackage(){
     const flags=["script","prompts","characters","frames","voiceover","video"];
     const checked=new Set([...$("#uiModal").querySelectorAll(".exq:checked")].map(c=>c.value));
     const qs=flags.map(f=>`${f}=${checked.has(f)?1:0}`).join("&");
-    _closeUiModal(); toast("Building ZIP…"); window.location="/api/export/package?"+qs;
+    _closeUiModal(); toast("Building ZIP…"); saveAsDownload("/api/export/package?"+qs,"project.zip");
   };
   const driveBtn=$("#exDrive"); if(driveBtn) driveBtn.onclick=()=>sendToDrive();
 }
@@ -5432,7 +5476,7 @@ async function deleteMusic(){
 async function setMusicVol(v){
   try{ const m=await api("/api/music/volume",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({volume:parseFloat(v)})}); if(STATE.music)STATE.music.volume=m.volume; }catch(_){}
 }
-function downloadCaptions(){ toast("Building .srt…"); window.location="/api/captions.srt"; }
+function downloadCaptions(){ toast("Building .srt…"); saveAsDownload("/api/captions.srt","captions.srt"); }
 function renderAudio(){
   const card=$("#audioCard");
   const a = STATE && STATE.audio;
@@ -5499,7 +5543,7 @@ function renderEditsList(){
         <span class="meta-mono">${new Date((e.created||0)*1000).toLocaleString()}</span>
         <span style="flex:1"></span>
         ${ytBtn}
-        <a class="btn outline sm" href="${_esc(e.url)}" download>Download MP4</a>
+        <a class="btn outline sm" href="javascript:void(0)" onclick="saveAsDownload('${_esc(e.url)}','${_esc((e.url||'').split('/').pop()||'video.mp4')}')">Download MP4</a>
         <button class="btn danger sm" onclick="delEdit('${e.id}')">Remove</button>
       </div>`;
     root.appendChild(w);
@@ -6170,7 +6214,7 @@ async function tlRender(){
     $("#tlResult").innerHTML=`<div class="editvid"><video controls src="${_esc(d.url)}"></video>
       <div style="padding:10px 14px;background:var(--bg2);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <span class="badge">${d.transition}</span><span style="flex:1"></span>
-        <a class="btn outline sm" href="${_esc(d.url)}" download>Download MP4</a></div></div>`;
+        <a class="btn outline sm" href="javascript:void(0)" onclick="saveAsDownload('${_esc(d.url)}','${_esc((d.url||'').split('/').pop()||'video.mp4')}')">Download MP4</a></div></div>`;
     toast("Timeline render complete","ok"); confettiBurst();
   }catch(e){ toast(e.message,"err"); }
   finally{ busy(b,false); }
@@ -6566,8 +6610,8 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
       if(d.seo) html+=apSeoHtml(d.seo);
       html+=`<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">`;
       if(d.video_url) html+=`<button class="btn sm" onclick="openReview('${d.video_url}','${(d.total_duration||0)}s · ${framesDone} frames')">🎬 Review &amp; adjust</button>`;
-      html+=`<a class="btn glow sm" href="/api/export/package" download>⬇ Download project ZIP</a>`;
-      if(d.video_url) html+=`<a class="btn outline sm" href="${_esc(d.video_url)}" download>MP4 only</a>`;
+      html+=`<a class="btn glow sm" href="javascript:void(0)" onclick="saveAsDownload('/api/export/package','project.zip')">⬇ Download project ZIP</a>`;
+      if(d.video_url) html+=`<a class="btn outline sm" href="javascript:void(0)" onclick="saveAsDownload('${_esc(d.video_url)}','${_esc((d.video_url||'').split('/').pop()||'video.mp4')}')">MP4 only</a>`;
       html+=`</div>`;
       $("#apResult").innerHTML=html;
       if(d.video_url){
@@ -6704,7 +6748,7 @@ function apSeoHtml(seo){
   return h+`</div>`;
 }
 function autoDownloadZip(){
-  try{ const a=document.createElement("a"); a.href="/api/export/package"; a.download=""; document.body.appendChild(a); a.click(); setTimeout(()=>a.remove(),1000); }catch(_){}
+  try{ saveAsDownload('/api/export/package','project.zip'); }catch(_){}
 }
 async function apBuildVideo(){
   // Re-run just the video assembly step (ElevenLabs TTS + SFX + ffmpeg) on
@@ -7084,7 +7128,7 @@ function asClipCard(c){
       </div>
       <audio src="${_esc(c.url)}" controls style="width:100%; height:32px"></audio>
       <div style="display:flex; gap:6px; margin-top:8px">
-        <a class="btn outline sm" style="flex:1; text-align:center" href="${_esc(c.url)}" download="${_esc(c.id+'.'+c.ext)}">⬇ Download</a>
+        <a class="btn outline sm" style="flex:1; text-align:center" href="javascript:void(0)" onclick="saveAsDownload('${_esc(c.url)}','${_esc(c.id+'.'+c.ext)}')">⬇ Download</a>
         <button class="btn outline sm" onclick="asPushToEdit('${_esc(c.id)}','${_esc(c.provider)}')">↗ Edit tab</button>
         <button class="btn outline sm" style="color:var(--red)" onclick="asDeleteClip('${_esc(c.id)}',this)">✕</button>
       </div>
