@@ -7305,10 +7305,29 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
     if _resume:
         body.fresh = False
         body.from_cache = True
-        body.keep_style = True
+        # keep_style should preserve the pinned style anchors ONLY if they
+        # actually exist on disk. A run that timed out / dropped BEFORE the
+        # style-frame pinning step (e.g. analysis of a long video exceeded the
+        # POST timeout, which now auto-resumes) has NO anchors yet — forcing
+        # keep_style=True there would skip pinning forever and every frame would
+        # render in a generic style instead of copying the reference video.
+        # Re-pin in that case so style fidelity is never lost on resume.
+        try:
+            _rs = store.load_state()
+            _have_anchors = bool(_rs.get("style_frames")) and bool(
+                (_rs.get("style_notes") or "").strip()
+                or (_rs.get("master_prompt") or "").strip())
+        except Exception:
+            _have_anchors = False
+        body.keep_style = _have_anchors
+        if not _have_anchors:
+            print("[autopilot] RESUME: no style anchors on disk yet — will RE-PIN "
+                  "from cached reference frames so style copying isn't lost",
+                  flush=True)
         if not body.run_id and _disk.get("run_id"):
             run_id = _disk["run_id"]
-        print(f"[autopilot] RESUME run_id={run_id} disk={_disk}", flush=True)
+        print(f"[autopilot] RESUME run_id={run_id} keep_style={body.keep_style} "
+              f"disk={_disk}", flush=True)
     print(f"[autopilot] START target_seconds={body.target_seconds!r} "
           f"pacing_seconds={body.pacing_seconds!r} "
           f"num_characters={body.num_characters!r} "
