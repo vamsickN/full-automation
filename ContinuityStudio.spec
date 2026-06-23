@@ -28,7 +28,7 @@ hidden += [
     "app", "config", "store", "pipeline", "editor", "derouter",
     "claude_client", "vault_crypto", "voice", "audio_gen", "youtube",
     "transcribe", "image_queue", "video", "pollinations", "diffusers",
-    "gen_with_refs", "punchup",
+    "gen_with_refs", "punchup", "nowindow",
 ]
 
 datas = [

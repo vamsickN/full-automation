@@ -183,6 +183,12 @@ def _show_error(title, message):
 
 def main():
     _fix_stdio()           # MUST run before any uvicorn import / app launch
+    # Suppress CMD window flashes from ffmpeg / yt-dlp / whisper subprocesses.
+    try:
+        import nowindow
+        nowindow.install()
+    except Exception:
+        pass
     _prepare_env()
     port = _free_port(8000)
     url = f"http://127.0.0.1:{port}/"

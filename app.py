@@ -32,6 +32,15 @@ try:
 except Exception:
     pass
 
+# Suppress CMD-window flashes from child processes (ffmpeg / ffprobe / yt-dlp /
+# whisper) on Windows. Safe no-op elsewhere. Imported here so it's active for
+# both the packaged desktop app AND the plain `uvicorn app:app` dev server.
+try:
+    import nowindow
+    nowindow.install()
+except Exception:
+    pass
+
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -6279,9 +6288,21 @@ def _ap_prog(run_id, **kw):
             "run_id": run_id, "started": time.time(), "steps_total": len(AP_STEPS),
             "step": "", "step_index": 0, "chars_done": 0, "chars_total": 0,
             "frames_done": 0, "frames_total": 0, "done": False, "video_url": None,
+            "recent_frames": [],
         })
         if "step" in kw:
             kw["step_index"] = AP_STEPS.index(kw["step"]) if kw["step"] in AP_STEPS else p["step_index"]
+        # Accumulate every completed frame URL into a rolling gallery so the UI
+        # can render images one-by-one as they finish (like a web page filling
+        # in), instead of all-at-once at the very end. Capped so the in-memory
+        # progress dict never grows unbounded on long runs.
+        _new_frame = kw.pop("last_image_url", None)
+        if _new_frame:
+            kw["last_image_url"] = _new_frame   # keep the single-latest field too
+            gallery = list(p.get("recent_frames") or [])
+            if _new_frame not in gallery:
+                gallery.append(_new_frame)
+            kw["recent_frames"] = gallery[-200:]   # cap memory
         # A successful completion clears any stale failure flags from an earlier
         # interrupted attempt on the same run_id (resume → complete), so a now-
         # finished project doesn't keep showing the old "stopped: <err>".
