@@ -6975,7 +6975,20 @@ function engUpdate(p){
   let pct=null, msg=ENG_STEP_MSG[p.step]||p.step;
   if(p.step==="frames" && p.frames_total){ const ok=(p.frames_done||0); pct=ok/p.frames_total*100; msg=`Rendering frames — ${ok}/${p.frames_total}`; }
   else if(p.step==="characters" && p.chars_total){ pct=(p.chars_done||0)/p.chars_total*100; msg=`Character sheets — ${p.chars_done||0}/${p.chars_total}`; }
-  engNodeLive(node,{msg, img:p.last_image_url||null, pct});
+  // Pick the RIGHT preview image for THIS node. Character sheets are exposed in
+  // p.recent_characters (the cast accumulator), NOT p.last_image_url (which feeds
+  // the scene-frames gallery) — so on the characters step the cast node must read
+  // the latest cast entry, else it shows a stale/blank scene frame instead of the
+  // sheet just rendered.
+  let _liveImg;
+  if(p.step==="characters"){
+    const _cast=p.recent_characters||[];
+    const _last=_cast.length?_cast[_cast.length-1]:null;
+    _liveImg=_last?((typeof _last==="string")?_last:_last.url):null;
+  } else {
+    _liveImg=p.last_image_url||null;
+  }
+  engNodeLive(node,{msg, img:_liveImg, pct});
   // engine core HUD
   const total=ENG_ORDER.length; let coreP=(upto/ (total-1))*100;
   if(p.step==="frames" && p.frames_total) coreP=((upto + (p.frames_done||0)/p.frames_total)/(total-1))*100;

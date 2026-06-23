@@ -2241,18 +2241,66 @@ def _normalize_scenes(scenes):
     # line) UNLESS its prompt also matches — then it's a pure visual repeat.
     def _norm_txt(x):
         return " ".join((x or "").lower().split())
+    # Punctuation-insensitive key: "He won." and "He won" must count as the SAME
+    # spoken line. Strips everything except word chars + spaces so trailing
+    # periods, commas, em-dashes etc. don't let a repeat slip through.
+    import re as _re
+    def _vo_key(x):
+        return _re.sub(r"[^\w ]+", "", _norm_txt(x)).strip()
+    # Collapse an immediately-doubled word or phrase INSIDE a single VO line
+    # ("the the empire" -> "the empire"; "he won he won" -> "he won"). The TTS
+    # would otherwise literally speak the repeat twice. A small allowlist of
+    # intentional onomatopoeia ("boom boom", "tick tick", "knock knock") is kept.
+    _SOUND_WORDS = {"boom", "tick", "knock", "ha", "ho", "no", "go", "bang",
+                    "beep", "tap", "drip", "ring", "chop", "puff", "woah", "wow"}
+    def _collapse_inline(txt):
+        if not txt:
+            return txt
+        # Iterate to a fixed point so triples/quadruples ("he won he won he won")
+        # fully collapse, not just one pair per pass.
+        for _ in range(4):
+            before = txt
+            # immediate duplicate phrase (2-6 words), tolerant of punctuation
+            # between the two copies ("Tom won. Tom won" -> "Tom won.").
+            txt = _re.sub(r"\b((?:\w+[\s]+){1,5}\w+)[\s\.,;:!?\-—]+\1\b",
+                          r"\1", txt, flags=_re.IGNORECASE)
+            # immediate duplicate single word, EXCEPT allowlisted sound-words.
+            txt = _re.sub(r"\b(\w+)(\s+)\1\b",
+                          lambda m: m.group(1) if m.group(1).lower() not in _SOUND_WORDS
+                          else m.group(0),
+                          txt, flags=_re.IGNORECASE)
+            if txt == before:
+                break
+        return " ".join(txt.split())
     deduped = []
+    _seen_vo = set()    # GLOBAL — catches repeats anywhere, not just adjacent
     for s in out:
-        vo_k = _norm_txt(s.get("vo") or s.get("narration") or s.get("voice_over"))
+        # First scrub inline doubling on the spoken line itself.
+        for _vf in ("vo", "narration", "voice_over"):
+            if s.get(_vf):
+                s[_vf] = _collapse_inline(s[_vf])
+        vo_raw = s.get("vo") or s.get("narration") or s.get("voice_over")
+        vo_k = _vo_key(vo_raw)
         pr_k = _norm_txt(s.get("prompt"))
         if deduped:
             prev = deduped[-1]
-            pvo = _norm_txt(prev.get("vo") or prev.get("narration") or prev.get("voice_over"))
+            pvo = _vo_key(prev.get("vo") or prev.get("narration") or prev.get("voice_over"))
             ppr = _norm_txt(prev.get("prompt"))
-            # Duplicate when the spoken line repeats (and there IS a line), or
-            # when both VO and prompt are identical (pure clone, incl. padded).
+            # Consecutive duplicate: spoken line repeats, OR pure clone (VO+prompt
+            # both identical, incl. a padded empty-VO frame).
             if (vo_k and vo_k == pvo) or (vo_k == pvo and pr_k == ppr and pr_k):
                 continue
+        # NON-consecutive duplicate spoken line: the same sentence said again two
+        # or more scenes later ("repeats same words twice" even when not adjacent).
+        # Drop the repeat but KEEP its frame as a silent beat so the visual count /
+        # pacing don't collapse — only the doubled narration is removed.
+        if vo_k and vo_k in _seen_vo:
+            for _vf in ("vo", "narration", "voice_over"):
+                if _vf in s:
+                    s[_vf] = ""
+            vo_k = ""
+        if vo_k:
+            _seen_vo.add(vo_k)
         deduped.append(s)
     # Renumber so scene `n` stays contiguous after drops (resume matches by n).
     for i, s in enumerate(deduped, 1):
@@ -4393,6 +4441,31 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
     #    each image paired with the exact words it was generated for.
     n = len(seq)
     frame_vos = [(seq[i].get("vo") or "").strip() for i in range(n)]
+    # FINAL anti-double-speak guard. The narration track is built from the VO
+    # carried on each frame. If two consecutive frames carry the SAME spoken line
+    # — which happens when a scene was re-rendered, micro-cut, padded, or the
+    # script model emitted a back-to-back repeat that slipped through earlier
+    # dedup — the TTS would literally speak that line twice (the "same voice-over
+    # repeated twice at the end" bug). Blank the duplicate's spoken line so it is
+    # NOT narrated again, while KEEPING the frame on screen (its hold is computed
+    # from the audio either way) so the picture count / pacing don't change and
+    # A/V stays locked. Compared punctuation-insensitively so "He won." == "He won".
+    def _vk(x):
+        return re.sub(r"[^\w ]+", "", " ".join((x or "").lower().split())).strip()
+    _prev_vk = None
+    _silenced = 0
+    for i in range(n):
+        _cur_vk = _vk(frame_vos[i])
+        if _cur_vk and _cur_vk == _prev_vk:
+            frame_vos[i] = ""      # don't speak it twice; frame still shows
+            _silenced += 1
+        elif _cur_vk:
+            _prev_vk = _cur_vk
+        # an empty-VO frame does NOT reset _prev_vk — a repeat split by a silent
+        # padded frame ("A", "", "A") must still be caught as a double.
+    if _silenced:
+        print(f"[video] muted {_silenced} duplicate consecutive VO line(s) so "
+              f"narration isn't spoken twice (frames kept, A/V locked)", flush=True)
     if any(frame_vos):
         tts_lines = frame_vos
         lines = frame_vos
@@ -7694,6 +7767,28 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
     # ---- STEP 3: Generate character sheets ----
     _check_stop(run_id)
     chars = script.get("characters") or []
+    # DEDUP THE CAST by normalized name BEFORE counting / rendering. Claude
+    # sometimes returns the same character twice (exact repeat, or "Tom"/"tom"/
+    # "Tom " casing+whitespace variants). If we don't collapse them here:
+    #   • chars_total = len(chars) overcounts (e.g. 3) while only the unique
+    #     sheets persist to state (2) → the cast counter sticks at "2/3" forever
+    #     even though every REAL character succeeded ("1/2 generated even tho it
+    #     used 2" bug);
+    #   • a duplicate sheet is rendered and paid for needlessly.
+    # Keep first occurrence, preserve order; un-named entries are dropped (the
+    # loop skips them anyway). This makes the counter total == real cast size.
+    _seen_names, _uniq_chars = set(), []
+    for _c in chars:
+        _nm = (_c.get("name") or "").strip()
+        _key = _nm.lower()
+        if not _nm or _key in _seen_names:
+            continue
+        _seen_names.add(_key)
+        _uniq_chars.append(_c)
+    if len(_uniq_chars) != len(chars):
+        print(f"[autopilot] cast dedup: {len(chars)} listed -> "
+              f"{len(_uniq_chars)} unique character(s)", flush=True)
+    chars = _uniq_chars
     # PROTAGONIST LOCK seed: the story's central subject, written into state so
     # every frame render pins it as the mandatory central figure (prevents the
     # "predator scene drops the hero" bug — e.g. a baby-elephant video rendering
