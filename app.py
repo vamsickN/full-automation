@@ -2230,7 +2230,34 @@ def _normalize_scenes(scenes):
             _rel = "cut"
         n["shot_relation"] = _rel
         out.append(n)
-    return out
+    # ── DEDUP: drop consecutive duplicate scenes ─────────────────────────────
+    # Two failure modes produced "same voice line twice + scene repeated like a
+    # variation": (a) the LLM script emits two back-to-back scenes with the SAME
+    # narration (and near-identical prompt); (b) the frame-step padding loop
+    # clones the last scene's prompt to hit the expected count. Either way the
+    # video spoke the line twice and showed a near-duplicate frame.
+    # Collapse a scene that has the SAME (vo, prompt) as the immediately
+    # preceding kept scene. An empty-VO padded frame is kept (it adds no spoken
+    # line) UNLESS its prompt also matches — then it's a pure visual repeat.
+    def _norm_txt(x):
+        return " ".join((x or "").lower().split())
+    deduped = []
+    for s in out:
+        vo_k = _norm_txt(s.get("vo") or s.get("narration") or s.get("voice_over"))
+        pr_k = _norm_txt(s.get("prompt"))
+        if deduped:
+            prev = deduped[-1]
+            pvo = _norm_txt(prev.get("vo") or prev.get("narration") or prev.get("voice_over"))
+            ppr = _norm_txt(prev.get("prompt"))
+            # Duplicate when the spoken line repeats (and there IS a line), or
+            # when both VO and prompt are identical (pure clone, incl. padded).
+            if (vo_k and vo_k == pvo) or (vo_k == pvo and pr_k == ppr and pr_k):
+                continue
+        deduped.append(s)
+    # Renumber so scene `n` stays contiguous after drops (resume matches by n).
+    for i, s in enumerate(deduped, 1):
+        s["n"] = i
+    return deduped
 
 
 def _deep_analyze_urls(urls, nudge, model, request, n_suggestions=10):
@@ -6774,6 +6801,40 @@ def api_autopilot_progress(run_id: str):
         p = dict(_AUTOPILOT_PROGRESS.get(run_id) or {})
     if not p:
         return {"run_id": run_id, "unknown": True}
+    # ── RESUME / RELOAD gallery backfill ─────────────────────────────────────
+    # On a RESUME run the run_id is fresh, so recent_frames/recent_characters
+    # start EMPTY and only newly-rendered items get appended — the frames and
+    # character sheets already on disk (which resume SKIPS re-rendering, but
+    # still uses as refs) never appear in the UI gallery → "it stops showing the
+    # previously generated character sheet and frames". Same gap after a page
+    # reload mid-run. Fix: union the live in-memory gallery with what's persisted
+    # on disk so the UI always shows the FULL set. Disk items come first (they're
+    # the older, already-done work), then any live items not already present.
+    try:
+        _st = store.load_state()
+        _disk_frames = [f.get("image_url") for f in (_st.get("sequence") or [])
+                        if f.get("image_url")]
+        _disk_chars = [{"url": c.get("sheet_url"), "name": c.get("name") or ""}
+                       for c in (_st.get("characters") or []) if c.get("sheet_url")]
+    except Exception:
+        _disk_frames, _disk_chars = [], []
+    # Frames: merge disk + live, dedup preserving order (disk first).
+    _live_frames = list(p.get("recent_frames") or [])
+    if _disk_frames:
+        _seen, _merged = set(), []
+        for u in _disk_frames + _live_frames:
+            if u and u not in _seen:
+                _seen.add(u); _merged.append(u)
+        p["recent_frames"] = _merged[-200:]
+    # Character sheets: merge by url.
+    _live_chars = list(p.get("recent_characters") or [])
+    if _disk_chars:
+        _seen, _merged = set(), []
+        for c in _disk_chars + _live_chars:
+            _cu = c.get("url") if isinstance(c, dict) else c
+            if _cu and _cu not in _seen:
+                _seen.add(_cu); _merged.append(c)
+        p["recent_characters"] = _merged[-50:]
     # Server-computed ETA from the dominant (frames) work + elapsed time.
     elapsed = max(0.0, time.time() - p.get("started", time.time()))
     done = p.get("frames_done", 0)
@@ -7831,10 +7892,16 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
         _last = scenes[-1] if scenes else {}
         _base_p = (_last.get("prompt") or "").strip()
         _cue = _angle_cue_for(len(scenes))
+        # Always vary the padded frame so it isn't a byte-identical clone of the
+        # previous one (which _normalize_scenes would then dedup away, leaving us
+        # short again). If no angle cue is available, fall back to a frame-index
+        # beat tag so each pad is visually distinct.
+        if not _cue:
+            _cue = f"continuation beat {len(scenes) + 1}"
         scenes.append({
             "n": len(scenes) + 1,
             "heading": _last.get("heading", "continuation"),
-            "action": "", "vo": "",
+            "action": "", "vo": "",   # no spoken line — never doubles narration
             "prompt": f"{_base_p}, {_cue}" if _base_p else _base_p,
         })
     print(f"[autopilot] rendering {len(scenes)} frames "

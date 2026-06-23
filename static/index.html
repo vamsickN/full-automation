@@ -6508,7 +6508,12 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
         d=await api("/api/autopilot",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
         break;  // success
       }catch(err){
-        const isNet=/Network error/i.test(err.message||"");
+        // Treat BOTH a dropped socket ("Network error") AND a client-side
+        // AbortController timeout ("Request timed out") as recoverable: the
+        // autopilot POST is long-running and fully checkpointed on disk, so the
+        // server is almost certainly still working (or its partial work is
+        // saved). Auto-reconnect with resume:true instead of hard-failing.
+        const isNet=/Network error|timed out/i.test(err.message||"");
         if(isNet && _netTries<AP_MAX_NET_RETRIES){
           _netTries++;
           _resume=true;  // every reconnect resumes — never restarts from scratch
@@ -6517,7 +6522,7 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
           await new Promise(r=>setTimeout(r, 4000));
           continue;  // poll keeps running; retry the request
         }
-        throw err;  // not a network error, or out of retries -> surface it
+        throw err;  // not a network/timeout error, or out of retries -> surface it
       }
     }
     clearInterval(AP_POLL);
