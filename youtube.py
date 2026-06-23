@@ -214,6 +214,90 @@ def thumbnail_bytes(video_id: str, thumb_url: str = "") -> bytes:
     return b""
 
 
+def storyboard_frames(url: str, video_id: str, max_frames: int = 12):
+    """Grab YouTube's seek-preview STORYBOARD sprite sheets and slice them into
+    individual real video stills. These are served from a separate CDN endpoint
+    that almost always works even when the full video stream download is blocked
+    / throttled (the #1 cause of 'only got 1 thumbnail -> weak style copy').
+
+    Returns a list of web paths (saved to data/frames) or [] on failure.
+    Never raises.
+    """
+    try:
+        import yt_dlp
+        from PIL import Image
+        import io as _io
+    except Exception as e:
+        _log(f"storyboard deps missing: {e}")
+        return []
+    # 1. Find storyboard formats (format_id starts with 'sb', vcodec 'none',
+    #    they carry .fragments = the sprite-sheet image URLs).
+    try:
+        opts = {"quiet": True, "no_warnings": True, "noplaylist": True,
+                "skip_download": True, "socket_timeout": 25,
+                "extractor_args": {"youtube": {"player_client": ["ios", "android", "web"]}}}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+    except Exception as e:
+        _log(f"storyboard info failed: {e}")
+        return []
+    sbs = [f for f in (info.get("formats") or [])
+           if str(f.get("format_id", "")).startswith("sb")
+           and (f.get("fragments") or f.get("url"))]
+    if not sbs:
+        _log("no storyboard formats available")
+        return []
+    # Pick the HIGHEST-resolution storyboard (largest width) for the sharpest
+    # stills — that's the best style read.
+    sbs.sort(key=lambda f: (f.get("width") or 0) * (f.get("height") or 0),
+             reverse=True)
+    sb = sbs[0]
+    # Each sprite sheet packs a grid of thumbnails (rows x cols). yt-dlp exposes
+    # columns/rows; default to a sane grid if absent.
+    cols = int(sb.get("columns") or 5)
+    rows = int(sb.get("rows") or 5)
+    frag_urls = [fr.get("url") for fr in (sb.get("fragments") or [])
+                 if fr.get("url")] or ([sb.get("url")] if sb.get("url") else [])
+    if not frag_urls:
+        return []
+    out = []
+    for furl in frag_urls:
+        if len(out) >= max_frames:
+            break
+        try:
+            r = requests.get(furl, timeout=25)
+            if r.status_code >= 400 or not r.content:
+                continue
+            sheet = Image.open(_io.BytesIO(r.content)).convert("RGB")
+            sw, sh = sheet.size
+            cw, ch = sw // max(1, cols), sh // max(1, rows)
+            if cw < 16 or ch < 16:
+                continue
+            for ry in range(rows):
+                for rx in range(cols):
+                    if len(out) >= max_frames:
+                        break
+                    tile = sheet.crop((rx * cw, ry * ch,
+                                       (rx + 1) * cw, (ry + 1) * ch))
+                    # Skip near-black/blank padding tiles at the sheet's tail.
+                    ex = tile.getextrema()
+                    if all(lo == hi for lo, hi in ex):
+                        continue
+                    buf = _io.BytesIO()
+                    tile.save(buf, format="PNG")
+                    web, _p = store.write_binary(
+                        "frames", buf.getvalue(), ext="png",
+                        name_hint=f"sb_{video_id}_{len(out):03d}")
+                    out.append(web)
+        except Exception as e:
+            _log(f"storyboard slice failed: {e}")
+            continue
+    if out:
+        _log(f"storyboard fallback: recovered {len(out)} real stills")
+    return out[:max_frames]
+
+
+
 # --------------------------------------------------------------------------- #
 #  Frame download (yt-dlp -> ffmpeg)
 # --------------------------------------------------------------------------- #
@@ -309,32 +393,43 @@ def ingest(url: str, max_frames: int = 12) -> dict:
     # pipeline silently falls back to a SINGLE thumbnail as the only style
     # anchor, which gives the image model far too weak a read of the source art
     # style → "the generated video is a completely different style". Retry the
-    # real frame download up to 2 more times before settling for the thumbnail.
+    # real frame download with WIDENING backoff so the attempts span past a
+    # short throttle window, not all inside it.
     if not frames:
         import time as _time
-        for _attempt in range(2):
-            _time.sleep(3 * (_attempt + 1))
-            _log(f"frame download empty — retry {_attempt + 1}/2 for {vid}")
+        for _attempt, _wait in enumerate((5, 12), 1):
+            _time.sleep(_wait)
+            _log(f"frame download empty — retry {_attempt}/2 for {vid}")
             frames, _path = download_frames(
                 url, max_frames=max_frames,
                 duration_hint=meta.get("duration", 0))
             if frames:
-                _log(f"retry {_attempt + 1} succeeded: {len(frames)} frames")
+                _log(f"retry {_attempt} succeeded: {len(frames)} frames")
                 break
+    # Still nothing after retries → the video stream is genuinely blocked from
+    # this network. Fall back to YouTube's STORYBOARD sprite sheets: real video
+    # stills served from a separate CDN that usually works even when the stream
+    # is blocked. This recovers 6-12 real anchors → style copying stays strong,
+    # instead of degrading to one thumbnail.
+    if not frames:
+        _log(f"frame download failed after retries — trying storyboard for {vid}")
+        sb = storyboard_frames(url, vid, max_frames=max_frames)
+        if sb:
+            frames = sb
     source = "frames"
     notes = ""
     if not frames:
-        # Fallback: one thumbnail still.
+        # Last resort: one thumbnail still.
         tb = thumbnail_bytes(vid, meta.get("thumbnail", ""))
         if tb:
             web, _p = store.write_binary("frames", tb, ext="jpg",
                                          name_hint=f"ytthumb_{vid}")
             frames = [web]
             source = "thumbnail"
-            notes = ("Couldn't download the video after retries (YouTube is "
-                     "throttling/blocking this network); used the thumbnail "
-                     "only — STYLE COPYING WILL BE WEAK. Re-run the analysis "
-                     "in a few minutes, or try a VPN, to get real video frames.")
+            notes = ("Couldn't download the video OR its storyboard after "
+                     "retries (YouTube is hard-blocking this network); used the "
+                     "thumbnail only — STYLE COPYING WILL BE WEAK. Re-run the "
+                     "analysis in a few minutes, or try a VPN, for real frames.")
         else:
             source = "none"
             notes = "Couldn't fetch frames or thumbnail; analysis uses transcript only."
