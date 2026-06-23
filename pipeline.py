@@ -164,7 +164,7 @@ def ref_manifest(ref_meta):
 
 def build_full_prompt(master_prompt, shot_prompt, matched, has_previous,
                       style_locked, style_notes="", micro_cut=False,
-                      ref_meta=None):
+                      ref_meta=None, protagonist=""):
     parts = [_MASTER_HINT]
     _flat = _is_flat_style(style_notes, master_prompt)
 
@@ -185,13 +185,44 @@ def build_full_prompt(master_prompt, shot_prompt, matched, has_previous,
     if _flat:
         parts.append(_FLAT_DIRECTIVE)
 
+    # PROTAGONIST LOCK — the single most important anti-"wrong-subject" guard.
+    # Root cause of the elephant bug: when a scene's VO/prompt mentions a
+    # predator or another animal ("predators smell newborns", "lions circle"),
+    # the image model made the PREDATOR the hero and dropped the baby elephant
+    # entirely — so a video about a baby elephant showed standalone leopards /
+    # cheetah cubs. The fix: pin the story's protagonist as the mandatory
+    # central subject of EVERY frame. Derive it from the matched character
+    # sheets (preferred — they're the canonical cast) or the explicit
+    # `protagonist` hint. Any other animal/character named in the prompt is a
+    # SECONDARY element reacting to / threatening / observing the protagonist —
+    # never a replacement for them.
+    _lead = (protagonist or "").strip()
+    if not _lead and matched:
+        _lead = ", ".join(c["name"] for c in matched)
+    if _lead:
+        parts.append(
+            f"PROTAGONIST LOCK (CRITICAL): the story's main subject is {_lead}. "
+            f"{_lead} MUST be clearly visible as the CENTRAL subject of this "
+            "frame. If the prompt or narration mentions a predator, another "
+            "animal, or any other character (e.g. a lion, leopard, cheetah, "
+            "hyena, crocodile, vulture, or a person), that other figure is a "
+            "SECONDARY element — it is watching, stalking, threatening, or "
+            "reacting to the protagonist, and must be shown TOGETHER WITH the "
+            f"protagonist in the same frame. NEVER replace {_lead} with the "
+            "predator or other animal. NEVER render the other animal alone. The "
+            f"protagonist's species/identity must exactly match the character "
+            "sheet — do not substitute a different animal."
+        )
+
     if matched:
         names = ", ".join(c["name"] for c in matched)
         parts.append(
             "CHARACTER REFERENCES: the attached labelled character sheets define "
             f"the canonical look of {names}. Keep each named character's face, "
             "hair, build, outfit and colors identical to their sheet wherever "
-            "they appear in this frame."
+            "they appear in this frame. Their SPECIES and anatomy must match the "
+            "sheet exactly — do not morph them into a different animal or add "
+            "anatomy that contradicts the sheet."
         )
 
     if micro_cut:

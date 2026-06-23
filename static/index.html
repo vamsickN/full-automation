@@ -6471,7 +6471,14 @@ async function runAutopilot(idx=0, fromCache=false, resume=false){
     `<div>`+AP_STEP_NAMES.map((s,i)=>`<div class="ap-step" id="aps${i}"><div class="ap-dot wait"></div><span>${s}</span></div>`).join("")+`</div>`+
     `<div class="ap-preview" id="apPreview"><div><img id="apPreviewImg" src="" alt=""/><div class="ap-prev-label" id="apPreviewLabel"></div></div></div>`+
     `</div>`+
-    `<div id="apGallery" style="display:none;margin-top:14px"><div style="font-size:12px;color:var(--muted);margin-bottom:6px" id="apGalleryLabel">Rendered frames</div><div id="apGalleryGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px"></div></div>`;
+    `<div id="apCast" style="display:none;margin-top:16px">`+
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:15px">◈</span><span style="font-size:13px;font-weight:700;letter-spacing:.3px">Cast — Character Sheets</span><span id="apCastCount" style="font-size:11px;color:var(--muted)"></span></div>`+
+      `<div id="apCastGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px"></div>`+
+    `</div>`+
+    `<div id="apGallery" style="display:none;margin-top:18px">`+
+      `<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px"><span style="font-size:15px">🎞</span><span style="font-size:13px;font-weight:700;letter-spacing:.3px" id="apGalleryLabel">Rendered Frames</span></div>`+
+      `<div id="apGalleryGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:10px"></div>`+
+    `</div>`;
   apMark(0,"active");
   try{ engStart(); }catch(_){}
   // Real progress: poll the server for step + how many images are done + ETA.
@@ -6637,8 +6644,29 @@ function apPaint(p){
     const label = p.step==="characters" ? `Character ${p.chars_done||""}` : `Frame ${p.frames_done||""}/${p.frames_total||"?"}`;
     if(pl) pl.textContent=label;
   }
-  // Growing gallery: render every completed frame one-by-one as they finish,
-  // so the user watches images fill the box instead of waiting for the end.
+  // ─── CAST: character sheets in their OWN premium box ───────────────────
+  const cast=$("#apCast"), cgrid=$("#apCastGrid"), ccount=$("#apCastCount");
+  const sheets=(p.recent_characters||[]);
+  if(cgrid && sheets.length){
+    cast.style.display="block";
+    const have=cgrid.children.length;
+    for(let i=have;i<sheets.length;i++){
+      const it=sheets[i]||{}; const url=(typeof it==="string")?it:it.url; const nm=(typeof it==="object"&&it.name)?it.name:("Character "+(i+1));
+      const cell=document.createElement("div");
+      cell.style.cssText="position:relative;border-radius:12px;overflow:hidden;border:1px solid var(--line);aspect-ratio:1/1;background:linear-gradient(135deg,rgba(217,119,87,.06),rgba(255,255,255,.02));box-shadow:0 2px 10px rgba(0,0,0,.25);transition:transform .15s,box-shadow .15s";
+      cell.onmouseenter=()=>{cell.style.transform="translateY(-2px) scale(1.02)";cell.style.boxShadow="0 6px 20px rgba(0,0,0,.4)";};
+      cell.onmouseleave=()=>{cell.style.transform="";cell.style.boxShadow="0 2px 10px rgba(0,0,0,.25)";};
+      const im=document.createElement("img");
+      im.src=url; im.loading="lazy";
+      im.style.cssText="width:100%;height:100%;object-fit:cover;display:block";
+      const tag=document.createElement("div");
+      tag.textContent=nm;
+      tag.style.cssText="position:absolute;left:0;right:0;bottom:0;font-size:11px;font-weight:600;color:#fff;background:linear-gradient(to top,rgba(0,0,0,.78),transparent);padding:14px 8px 5px;text-align:center";
+      cell.appendChild(im); cell.appendChild(tag); cgrid.appendChild(cell);
+    }
+    if(ccount) ccount.textContent=`(${sheets.length}${p.chars_total?"/"+p.chars_total:""})`;
+  }
+  // ─── FRAMES: rendered scene frames in a SEPARATE premium box ───────────
   const gal=$("#apGallery"), grid=$("#apGalleryGrid"), glab=$("#apGalleryLabel");
   const frames=(p.recent_frames||[]);
   if(grid && frames.length){
@@ -6647,16 +6675,18 @@ function apPaint(p){
     const have=grid.children.length;
     for(let i=have;i<frames.length;i++){
       const cell=document.createElement("div");
-      cell.style.cssText="position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--line);aspect-ratio:16/9;background:rgba(255,255,255,.02)";
+      cell.style.cssText="position:relative;border-radius:10px;overflow:hidden;border:1px solid var(--line);aspect-ratio:16/9;background:rgba(255,255,255,.02);box-shadow:0 2px 8px rgba(0,0,0,.22);transition:transform .15s,box-shadow .15s";
+      cell.onmouseenter=()=>{cell.style.transform="translateY(-2px) scale(1.02)";cell.style.boxShadow="0 6px 18px rgba(0,0,0,.38)";};
+      cell.onmouseleave=()=>{cell.style.transform="";cell.style.boxShadow="0 2px 8px rgba(0,0,0,.22)";};
       const im=document.createElement("img");
       im.src=frames[i]; im.loading="lazy";
       im.style.cssText="width:100%;height:100%;object-fit:cover;display:block";
       const tag=document.createElement("div");
       tag.textContent="#"+(i+1);
-      tag.style.cssText="position:absolute;bottom:3px;right:5px;font-size:10px;color:#fff;background:rgba(0,0,0,.55);padding:1px 5px;border-radius:4px";
+      tag.style.cssText="position:absolute;bottom:4px;right:6px;font-size:10px;font-weight:600;color:#fff;background:rgba(0,0,0,.6);padding:2px 6px;border-radius:5px";
       cell.appendChild(im); cell.appendChild(tag); grid.appendChild(cell);
     }
-    if(glab) glab.textContent=`Rendered frames (${frames.length}${p.frames_total?"/"+p.frames_total:""})`;
+    if(glab) glab.textContent=`Rendered Frames (${frames.length}${p.frames_total?"/"+p.frames_total:""})`;
   }
 }
 function apSeoHtml(seo){

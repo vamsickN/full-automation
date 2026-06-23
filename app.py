@@ -1309,6 +1309,32 @@ class GenerateIn(BaseModel):
     character_ids: Optional[List[str]] = None
 
 
+def _project_protagonist(st) -> str:
+    """The story's main visual subject, used to PROTAGONIST-LOCK every frame so
+    a predator/other-animal scene never replaces the hero (the elephant bug).
+
+    Resolution order:
+      1. explicit st['protagonist'] (set by autopilot from the analysis)
+      2. the FIRST named character sheet (the cast lead — e.g. the baby/calf)
+      3. a 'subject' field on the cached analysis / yt_inspiration
+    Returns '' when nothing is known (lock is then skipped — safe no-op).
+    """
+    try:
+        p = (st.get("protagonist") or "").strip()
+        if p:
+            return p
+        chars = st.get("characters") or []
+        named = [c.get("name", "").strip() for c in chars if c.get("name")]
+        if named:
+            # All named cast members are valid protagonists; join the first
+            # two so e.g. "Calf, Mother" both stay in frame on family beats.
+            return ", ".join(named[:2])
+        insp = st.get("yt_inspiration") or {}
+        return (insp.get("subject") or insp.get("protagonist") or "").strip()
+    except Exception:
+        return ""
+
+
 def _render_one(g_prompt, size, quality, continue_prev, style_lock,
                 character_ids=None, request: Request = None,
                 shot_relation="cut", scene_vo=None, scene_n=None):
@@ -1393,6 +1419,7 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
         # In multi-image mode the contact-sheet captions are gone, so describe
         # each attached image in the prompt instead.
         ref_meta=(ref_meta if (_multi and len(refs) > 1) else None),
+        protagonist=_project_protagonist(st),
     )
 
     if refs:
@@ -1588,7 +1615,8 @@ def _render_one_for_queue(g_prompt, params, settings, project_id):
         style_notes=_queue_style_notes, micro_cut=micro_cut,
         # Multi-image mode: contact-sheet captions are gone, so name each
         # attached image in the prompt so the model keeps style/identity roles.
-        ref_meta=(ref_meta if (multi_image_edit and len(refs) > 1) else None))
+        ref_meta=(ref_meta if (multi_image_edit and len(refs) > 1) else None),
+        protagonist=_project_protagonist(st))
 
     if refs:
         # Per-ref captions so the model can tell the STYLE anchor from a
@@ -1797,7 +1825,7 @@ def _shot_image(st, prev, g_prompt, size, quality, request):
     full_prompt = pipeline.build_full_prompt(
         st["master_prompt"], g_prompt, matched,
         has_previous=bool(prev), style_locked=bool(st.get("style_frames")),
-        style_notes=_shot_style_notes)
+        style_notes=_shot_style_notes, protagonist=_project_protagonist(st))
     if refs:
         multi = request.state.settings["multi_image_edit"]
         send = refs if (multi and len(refs) > 1) else (
@@ -2556,18 +2584,22 @@ def _overlay_text(img_bytes, headline="", subtitle="", position="bottom",
                 pass
         return ImageFont.load_default()
 
-    tsize = max(34, W // 12)
-    tf, sf = font(tsize, True), font(max(20, W // 30), False)
+    # PREMIUM title block: big bold UPPERCASE, tight wrap, heavy stroke + drop
+    # shadow for legibility on any background, and an accent colour on the single
+    # most impactful keyword so it reads like a pro thumbnail, not an auto-caption.
+    tsize = max(48, W // 9)
+    tf, sf = font(tsize, True), font(max(22, W // 26), False)
 
     def dims(line, f):
         b = d.textbbox((0, 0), line, font=f)
         return (b[2] - b[0], b[3] - b[1])
 
-    chars = max(8, int(W * 0.92 / (tsize * 0.55)))
-    lines = textwrap.wrap(headline or "", width=chars)
-    line_h = dims("Ag", tf)[1] + int(tsize * 0.2)
+    _head = (headline or "").strip().upper()
+    chars = max(8, int(W * 0.90 / (tsize * 0.56)))
+    lines = textwrap.wrap(_head, width=chars) if _head else []
+    line_h = dims("Ag", tf)[1] + int(tsize * 0.26)
     block_h = line_h * len(lines) + (dims("Ag", sf)[1] + 18 if subtitle else 0)
-    pad = int(H * 0.06)
+    pad = int(H * 0.055)
     if position == "top":
         y0 = pad
     elif position == "center":
@@ -2576,26 +2608,47 @@ def _overlay_text(img_bytes, headline="", subtitle="", position="bottom",
         y0 = H - block_h - pad
 
     if scrim and (lines or subtitle):
-        band = block_h + pad * 2
+        # Stronger, taller gradient scrim for solid contrast under big text.
+        band = block_h + pad * 3
         grad = Image.new("L", (1, band), 0)
         for i in range(band):
             frac = i / max(1, band)
-            grad.putpixel((0, i), int(200 * (1 - frac if position == "top" else frac)))
+            grad.putpixel((0, i), int(235 * (1 - frac if position == "top" else frac)))
         grad = grad.resize((W, band))
-        top = 0 if position == "top" else max(0, y0 - pad)
+        top = 0 if position == "top" else max(0, y0 - pad * 2)
         black = Image.new("RGBA", (W, band), (0, 0, 0, 255))
         black.putalpha(grad)
         im.paste(black, (0, top), black)
         d = ImageDraw.Draw(im, "RGBA")
 
     fill = _hex_rgb(color)
-    accent = _hex_rgb(brand.get("accent") or "#d97757")
-    stroke = max(2, tsize // 14)
+    accent = _hex_rgb(brand.get("accent") or "#ffd23f")  # punchy gold accent
+    stroke = max(3, tsize // 11)
+
+    # Pick ONE keyword to accent (longest word — usually the emotional hook).
+    _all_words = [w for ln in lines for w in ln.split()]
+    _accent_word = max(_all_words, key=len).strip(",.!?:;") if _all_words else ""
+
+    def _draw_line_centered(ln, y):
+        # Word-by-word so we can accent-colour one keyword, with drop shadow.
+        words = ln.split()
+        widths = [dims(w + " ", tf)[0] for w in words]
+        total = sum(widths) - (dims(" ", tf)[0] if words else 0)
+        x = (W - total) // 2
+        for w, ww in zip(words, widths):
+            col = (accent if (_accent_word and
+                   w.strip(",.!?:;").upper() == _accent_word.upper())
+                   else fill)
+            # drop shadow
+            d.text((x + max(3, stroke // 2), y + max(3, stroke // 2)), w,
+                   font=tf, fill=(0, 0, 0, 180))
+            d.text((x, y), w, font=tf, fill=col + (255,),
+                   stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+            x += ww
+
     y = y0
     for ln in lines:
-        w, _h = dims(ln, tf)
-        d.text(((W - w) // 2, y), ln, font=tf, fill=fill + (255,),
-               stroke_width=stroke, stroke_fill=(0, 0, 0, 255))
+        _draw_line_centered(ln, y)
         y += line_h
     if subtitle:
         y += 10
@@ -4266,6 +4319,40 @@ def _build_flow_video(st, request, *, voice_id, text, transition="cut",
     text = (text or "").strip()
     if not text:
         raise HTTPException(400, "No voice-over text. Generate a script first.")
+
+    # 0. SANITIZE the sequence: remove stale frames from a previous project/topic
+    #    that got left in the sequence when a new script was generated. This was
+    #    the cause of "video has wrong frames / extra scenes / no voice on some
+    #    frames" — the sequence had 23 frames (prison + old serotonin + empty)
+    #    but the script only had 10 prison scenes. Build Video happily rendered
+    #    all 23, producing 13 frames with wrong or no voiceover.
+    #    Fix: trim the sequence to only frames that belong to the CURRENT script.
+    #    Strategy: compare frame VO to script scene VO. Keep only frames whose
+    #    vo matches a script scene (or is a prefix of one), then cap at the
+    #    script's scene count. If the trimmed set is empty (old pre-vo frames),
+    #    fall back to the script scene count as a positional cap.
+    _script_scenes = _scene_vo_lines(st)
+    _script_vo_set = set(v.strip() for v in _script_scenes if v.strip())
+    _script_n = len(_script_scenes)
+    if _script_n > 0 and len(seq) > _script_n:
+        # Filter: keep only frames whose VO matches a script scene.
+        _clean = [f for f in seq
+                  if (f.get("vo") or "").strip() in _script_vo_set]
+        if len(_clean) >= _script_n:
+            # Enough matching frames — use the cleaned set (capped at script_n
+            # in case of duplicates from micro-cuts, though those split AFTER
+            # assembly, not in the sequence itself).
+            seq = _clean[:_script_n]
+        else:
+            # Not enough matching frames (old pre-vo-on-frame project) — cap
+            # positionally at the script scene count.
+            seq = seq[:_script_n]
+        # Persist the cleaned sequence so the UI + resume see the same set.
+        st["sequence"] = seq
+        n = len(seq)
+        print(f"[video] sanitized sequence: {len(st.get('sequence') or [])} "
+              f"frames (was {len(seq) if _clean else n}, script has {_script_n} "
+              f"scenes)", flush=True)
 
     # 1. ONE continuous narration track — synthesized from per-scene VO lines
     #    joined with double-newlines so that character timestamps map directly
@@ -6424,7 +6511,7 @@ def _ap_prog(run_id, **kw):
             "run_id": run_id, "started": time.time(), "steps_total": len(AP_STEPS),
             "step": "", "step_index": 0, "chars_done": 0, "chars_total": 0,
             "frames_done": 0, "frames_total": 0, "done": False, "video_url": None,
-            "recent_frames": [],
+            "recent_frames": [], "recent_characters": [],
         })
         if "step" in kw:
             kw["step_index"] = AP_STEPS.index(kw["step"]) if kw["step"] in AP_STEPS else p["step_index"]
@@ -6439,6 +6526,16 @@ def _ap_prog(run_id, **kw):
             if _new_frame not in gallery:
                 gallery.append(_new_frame)
             kw["recent_frames"] = gallery[-200:]   # cap memory
+        # Same for completed CHARACTER SHEETS — kept in a SEPARATE list so the UI
+        # shows cast sheets in their own box (not mixed with scene frames). Each
+        # entry is {url, name} so the card can label the character.
+        _new_char = kw.pop("last_character", None)
+        if _new_char and (_new_char.get("url") if isinstance(_new_char, dict) else _new_char):
+            cast = list(p.get("recent_characters") or [])
+            _cu = _new_char.get("url") if isinstance(_new_char, dict) else _new_char
+            if not any((c.get("url") if isinstance(c, dict) else c) == _cu for c in cast):
+                cast.append(_new_char)
+            kw["recent_characters"] = cast[-50:]
         # A successful completion clears any stale failure flags from an earlier
         # interrupted attempt on the same run_id (resume → complete), so a now-
         # finished project doesn't keep showing the old "stopped: <err>".
@@ -7517,6 +7614,26 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
     # ---- STEP 3: Generate character sheets ----
     _check_stop(run_id)
     chars = script.get("characters") or []
+    # PROTAGONIST LOCK seed: the story's central subject, written into state so
+    # every frame render pins it as the mandatory central figure (prevents the
+    # "predator scene drops the hero" bug — e.g. a baby-elephant video rendering
+    # standalone leopards). Lead = first named character; enrich with the title's
+    # subject noun when available so the lock reads naturally.
+    try:
+        _lead_names = [(_c.get("name") or "").strip()
+                       for _c in chars if (_c.get("name") or "").strip()]
+        _protag = ", ".join(_lead_names[:2]) if _lead_names else ""
+        if not _protag:
+            # No named cast — fall back to the title's main subject.
+            _ttl = (script.get("title") or title or "").strip()
+            _protag = _ttl
+        if _protag:
+            _ps = store.load_state()
+            _ps["protagonist"] = _protag
+            store.save_state(_ps)
+            print(f"[autopilot] protagonist lock: {_protag}", flush=True)
+    except Exception as _pl_ex:
+        print(f"[autopilot] protagonist seed skipped: {_pl_ex}", flush=True)
     _scene_total = len([sc for sc in (script.get("scenes") or [])
                         if (sc.get("prompt") or "").strip()])
     # Seed chars_done from any sheets already on disk so the counter starts at
@@ -7664,9 +7781,13 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
             _chars_done_so_far = len(char_created)
         # Only push last_image_url when we actually have one — passing None
         # would blank a just-shown sheet preview on the node. Keep it sticky.
+        # NOTE: a character sheet must NOT go into last_image_url, because that
+        # feeds the SCENE-FRAMES gallery (recent_frames) and would mix cast
+        # sheets into the frames box. Sheets go ONLY to last_character (the
+        # separate Cast box). The single-latest node preview reads either field.
         _prog_kw = {"chars_done": _chars_done_so_far}
         if _sheet_box.get("url"):
-            _prog_kw["last_image_url"] = _sheet_box["url"]
+            _prog_kw["last_character"] = {"url": _sheet_box["url"], "name": name}
         _ap_prog(run_id, **_prog_kw)
     if char_fatal_err:
         char_err_hint = ("character sheets failed — image account problem: "
@@ -7936,9 +8057,19 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
             "pushed-up contrast and saturation, punchy complementary colours, "
             "strong rim/back lighting, clear depth and crisp separation from the "
             "background, a touch of wide-angle drama. Rule-of-thirds composition; "
-            "keep clean negative space on ONE side for a short bold title overlay. "
-            "Ultra-crisp and professional. No watermark, no logos, no borders, no "
-            "tiny or garbled text.")
+            "keep clean, uncluttered negative space on ONE side (a title will be "
+            "added later as a separate overlay). Ultra-crisp and professional.")
+        # CRITICAL: the image model must render ZERO text. The title is baked on
+        # afterwards by Pillow (_overlay_text). When the model ALSO renders title
+        # text into the image you get DOUBLE titles + cropped/garbled words +
+        # stray watermark words (the "ELEPHANT" + duplicated-title bug). Forbid
+        # all text/letters/watermarks/signs in the generated art itself.
+        bits.append(
+            "ABSOLUTELY NO TEXT of any kind in the image: no title, no caption, "
+            "no letters, no words, no numbers, no watermark, no logo, no signage, "
+            "no UI, no subtitles, no labels, no borders or frames. Render ONLY "
+            "the illustration/photo — a completely text-free image. Any text in "
+            "the output is a failure.")
         # Match the source video's flat cartoon look for flat/stick-figure styles.
         if pipeline._is_flat_style(style_hint, st.get("master_prompt", "")):
             bits.append(pipeline._FLAT_DIRECTIVE)
@@ -7959,7 +8090,7 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
         thumb_raw_url = store.write_image("images", img)
         st = store.load_state()
         brand = st.get("brand") or {}
-        overlay_png = _overlay_text(img, thumb_title, "", "bottom",
+        overlay_png = _overlay_text(img, thumb_title, "", "top",
                                      "#ffffff", True, brand)
         final_url = store.write_image("images", overlay_png)
         thumb_rec = {
