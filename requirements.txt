@@ -1,5 +1,11 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
+# Pin pydantic + pydantic-core as a matched pair. Unpinned installs can pull a
+# pydantic whose required pydantic-core differs from the cached/bundled .pyd,
+# producing: "SystemError: installed pydantic-core (X) incompatible with the
+# current pydantic version, which requires (Y)" at runtime in the frozen EXE.
+pydantic==2.13.4
+pydantic-core==2.46.4
 python-multipart>=0.0.9
 openai>=1.30
 anthropic>=0.40
