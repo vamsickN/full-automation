@@ -8,7 +8,7 @@
 ; install gets the native window without needing Edge first.
 
 #define MyAppName "Continuity Studio"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "2.0.0"
 #define MyAppPublisher "Continuity Studio"
 #define MyAppExeName "ContinuityStudio.exe"
 
