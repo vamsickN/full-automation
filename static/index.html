@@ -522,6 +522,30 @@
     -webkit-mask-image:radial-gradient(ellipse 85% 58% at 50% 0%, #000 30%, transparent 80%)}
   .home-link{transition:all .2s var(--ease-out)} .home-link:hover{transform:translateY(-2px); filter:drop-shadow(0 0 14px rgba(255,133,48,.7))}
 
+  /* ============ NICHE BUILDER / MINI-YOUTUBE GRID ============ */
+  .yt-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(230px,1fr)); gap:18px 16px}
+  .yt-card{background:transparent; cursor:pointer; display:flex; flex-direction:column; gap:9px; text-decoration:none; color:inherit}
+  .yt-card:hover .yt-thumb{box-shadow:0 0 0 2px var(--violet), 0 8px 24px -8px rgba(0,0,0,.6)}
+  .yt-card:hover .yt-vtitle{color:var(--violet)}
+  .yt-thumb{position:relative; width:100%; aspect-ratio:16/9; border-radius:12px; overflow:hidden; background:#14111c; transition:box-shadow .18s var(--ease-out)}
+  .yt-thumb img{width:100%; height:100%; object-fit:cover; display:block}
+  .yt-dur{position:absolute; right:7px; bottom:7px; background:rgba(0,0,0,.82); color:#fff; font-size:11.5px; font-weight:600; padding:1px 6px; border-radius:5px; font-family:var(--mono)}
+  .yt-meta{display:flex; gap:10px}
+  .yt-av{width:34px; height:34px; border-radius:50%; background:linear-gradient(135deg,var(--violet),var(--amber)); flex:none; display:flex; align-items:center; justify-content:center; font-weight:800; color:#fff; font-size:14px; text-transform:uppercase}
+  .yt-vtitle{font-family:var(--disp); font-weight:600; font-size:13.5px; line-height:1.35; color:var(--ink); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; transition:color .15s}
+  .yt-sub{font-size:12px; color:var(--muted); margin-top:3px}
+  .niche-report{border:1px solid var(--violet); border-radius:14px; padding:20px 22px; background:linear-gradient(180deg,rgba(168,124,255,.07),rgba(168,124,255,.02))}
+  .niche-report h3{font-family:var(--disp); color:var(--violet); margin:0 0 4px; font-size:20px}
+  .niche-chips{display:flex; flex-wrap:wrap; gap:8px; margin:12px 0}
+  .niche-chip{background:rgba(168,124,255,.12); border:1px solid rgba(168,124,255,.3); color:var(--violet); border-radius:20px; padding:4px 12px; font-size:12px; font-weight:600}
+  .topic-card{border:1px solid var(--line2); border-radius:10px; padding:13px 15px; background:var(--bg2); transition:border-color .15s}
+  .topic-card:hover{border-color:var(--violet)}
+  .topic-card .tt{font-family:var(--disp); font-weight:700; font-size:14.5px; color:var(--ink); margin-bottom:4px}
+  .topic-card .ta{font-size:12.5px; color:var(--muted); line-height:1.5}
+  .topic-card .send{margin-top:9px}
+  .appeal-high{color:#3ddc84; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px}
+  .appeal-medium{color:var(--amber); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px}
+
   /* ============ PROJECT SWITCHER ============ */
   .proj-switch{position:relative; margin-left:8px}
   .proj-btn{display:flex; align-items:center; gap:10px; background:rgba(20,17,28,.7); border:1px solid var(--line2);
@@ -1306,6 +1330,9 @@
         <span class="pdot"></span><span id="projName">Project</span>
         <svg width="10" height="6" viewBox="0 0 10 6" aria-hidden="true"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
+      <button class="proj-btn" id="refreshBtn" onclick="refreshApp(this)" title="Refresh — reload the current project from disk" aria-label="Refresh" style="margin-left:6px; padding:9px 12px">
+        <svg id="refreshIcn" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" style="transition:transform .5s var(--ease-out)"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <div class="proj-menu" id="projMenu">
         <div class="pm-label">Projects</div>
         <input class="pm-search" id="projSearch" placeholder="Search projects…" oninput="renderProjMenu()" onclick="event.stopPropagation()" />
@@ -1338,6 +1365,7 @@
     <button class="tab tab-wf" data-view="workflow">⬡ Workflow</button>
     <button class="tab active" data-view="universe"><span class="n">01</span>Universe</button>
     <button class="tab tab-yt" data-view="analyser"><span class="n">02</span>▶ YT Analyser</button>
+    <button class="tab" data-view="niche" style="color:var(--violet)">🎯 Niche Builder</button>
     <button class="tab" data-view="script"><span class="n">03</span>Script Generator</button>
     <button class="tab" data-view="characters"><span class="n">04</span>Characters</button>
     <button class="tab" data-view="sequence"><span class="n">05</span>Sequence</button>
@@ -2253,6 +2281,41 @@ Close-up of @Mira fixing a circuit board, sparks reflecting on her goggles
       <div id="usageTotals" class="usage-totals"></div>
       <div id="usageChart" style="margin-top:24px"></div>
       <div id="usageProjects" style="margin-top:24px"></div>
+    </section>
+
+    <!-- ============ NICHE BUILDER (standalone) ============ -->
+    <section class="view sheet" id="view-niche">
+      <h2 class="section">🎯 Niche Builder</h2>
+      <p class="sub">Paste several <strong>stick-man / faceless YouTube channel</strong> links. We pull their recent videos into a mini-YouTube grid, then the AI finds the niche that's actually working and recommends topics for your next videos. <strong>Separate from the YouTube workflow.</strong></p>
+
+      <div class="row" style="gap:20px; flex-wrap:wrap; align-items:flex-start; margin-top:14px">
+        <div class="grow" style="min-width:340px; flex:1">
+          <label class="label">Channel links — one per line <span id="nicheCount" style="color:var(--violet)"></span></label>
+          <textarea id="nicheUrls" rows="5" oninput="_nicheCount()" placeholder="https://youtube.com/@stickmanchannel
+https://youtube.com/@anotherchannel/videos
+https://youtube.com/playlist?list=…" class="inp" style="font-family:var(--mono); font-size:12.5px"></textarea>
+          <div class="row" style="gap:12px; align-items:center; margin-top:10px; flex-wrap:wrap">
+            <label class="sub" style="display:flex; align-items:center; gap:6px">Videos / channel
+              <input id="nichePer" type="number" min="3" max="30" value="12" class="inp" style="width:70px" />
+            </label>
+            <button class="btn" id="nicheScanBtn" onclick="nicheScan()">▶ Scan channels</button>
+            <button class="btn outline" id="nicheAnalyseBtn" onclick="nicheAnalyse()" style="color:var(--violet); border-color:var(--violet)">🧠 Find niche + topics</button>
+          </div>
+          <label class="label" style="margin-top:12px">Focus / constraint (optional)</label>
+          <input id="nicheNudge" class="inp" placeholder="e.g. keep it kid-friendly · sports only · under 60s shorts" />
+        </div>
+      </div>
+
+      <!-- AI niche report -->
+      <div id="nicheReport" style="display:none; margin-top:22px"></div>
+
+      <!-- mini YouTube grid -->
+      <div id="nicheDeckWrap" style="display:none; margin-top:26px">
+        <h4 style="color:var(--violet); margin-bottom:4px">📺 Recommendations <span id="nicheDeckCount" class="sub"></span></h4>
+        <div id="nicheChannels" class="sub" style="margin-bottom:14px"></div>
+        <div id="nicheDeck" class="yt-grid"></div>
+      </div>
+      <div id="nicheEmpty" class="sub" style="margin-top:30px; opacity:.6">No channels scanned yet. Paste links above and hit <strong>Scan channels</strong>.</div>
     </section>
 
     <!-- ============ AUDIO → VIDEO (standalone) ============ -->
@@ -3470,6 +3533,7 @@ function cmdkCommands(){
     {icon:"⬡", label:"Go: Workflow", run:()=>openView("workflow")},
     {icon:"◧", label:"Go: Universe", run:()=>openView("universe")},
     {icon:"▶", label:"Go: YT Analyser", run:()=>openView("analyser")},
+    {icon:"🎯", label:"Go: Niche Builder", run:()=>openView("niche")},
     {icon:"✎", label:"Go: Script Generator", run:()=>openView("script")},
     {icon:"◈", label:"Go: Characters", run:()=>openView("characters")},
     {icon:"▦", label:"Go: Sequence", run:()=>openView("sequence")},
@@ -3508,11 +3572,114 @@ async function switchProject(id){
   try{ await api("/api/projects/"+id+"/switch",{method:"POST"}); await load(); toast("Switched project","ok"); }
   catch(e){ toast(e.message,"err"); }
 }
+async function refreshApp(btn){
+  const icn=$("#refreshIcn");
+  if(icn){ icn.style.transform="rotate(360deg)"; setTimeout(()=>{ icn.style.transition="none"; icn.style.transform="rotate(0deg)"; requestAnimationFrame(()=>{ icn.style.transition=""; }); }, 520); }
+  try{ await load(); toast("Refreshed","ok"); }
+  catch(e){ toast(e.message,"err"); }
+}
 async function newProject(){
   const r=await uiNewProject(); if(!r) return;
   $("#projMenu").classList.remove("show");
   try{ await api("/api/projects",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(r)}); await load(); toast("New project created — a blank canvas ✦","ok"); }
   catch(e){ toast(e.message,"err"); }
+}
+
+/* ---------- niche builder ---------- */
+let NICHE_URLS=[];
+function _nicheUrls(){ return ($("#nicheUrls").value||"").split("\n").map(x=>x.trim()).filter(Boolean); }
+function _nicheCount(){ const n=_nicheUrls().length; const el=$("#nicheCount"); if(el) el.textContent=n?`(${n} channel${n>1?"s":""})`:""; }
+function _fmtViews(v){ v=Number(v)||0; if(v>=1e6) return (v/1e6).toFixed(v>=1e7?0:1)+"M"; if(v>=1e3) return (v/1e3).toFixed(v>=1e4?0:1)+"K"; return String(v); }
+function _fmtDur(s){ s=Number(s)||0; if(!s) return ""; const h=Math.floor(s/3600), m=Math.floor(s%3600/60), ss=Math.floor(s%60); return (h?h+":"+String(m).padStart(2,"0"):m)+":"+String(ss).padStart(2,"0"); }
+function _ytCard(v){
+  const ch=_esc(v.channel||""); const ini=(ch.replace(/^@/,"")[0]||"?");
+  const dur=_fmtDur(v.duration); const views=v.views?`${_fmtViews(v.views)} views`:"";
+  return `<a class="yt-card" href="${_esc(v.url)}" target="_blank" rel="noopener" title="${_esc(v.title)}">
+    <div class="yt-thumb"><img loading="lazy" src="${_esc(v.thumbnail)}" onerror="this.style.opacity=0"/>${dur?`<span class="yt-dur">${dur}</span>`:""}</div>
+    <div class="yt-meta"><div class="yt-av">${_esc(ini)}</div><div style="min-width:0">
+      <div class="yt-vtitle">${_esc(v.title)}</div>
+      <div class="yt-sub">${ch}</div>
+      <div class="yt-sub">${views}</div>
+    </div></div></a>`;
+}
+function renderNicheDeck(deck){
+  const wrap=$("#nicheDeckWrap"), grid=$("#nicheDeck"), empty=$("#nicheEmpty");
+  const vids=(deck&&deck.videos)||[];
+  if(!vids.length){ if(wrap) wrap.style.display="none"; if(empty) empty.style.display="block"; return; }
+  if(empty) empty.style.display="none";
+  if(wrap) wrap.style.display="block";
+  $("#nicheDeckCount").textContent=`· ${vids.length} videos`;
+  $("#nicheChannels").innerHTML=(deck.channels||[]).map(c=>`<span class="niche-chip">${_esc(c.channel)} · ${c.count}</span>`).join(" ");
+  grid.innerHTML=vids.map(_ytCard).join("");
+}
+async function nicheScan(){
+  const urls=_nicheUrls(); if(!urls.length){ toast("Paste at least one channel link","err"); return; }
+  const per=Math.max(3,Math.min(parseInt($("#nichePer").value||"12",10),30));
+  const b=$("#nicheScanBtn"); busy(b,true,"Scanning");
+  try{
+    const deck=await api("/api/niche/scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,per_channel:per})});
+    renderNicheDeck(deck);
+    toast(`Pulled ${deck.videos.length} videos from ${deck.channels.length} channel(s)`,"ok");
+  }catch(e){ toast(e.message,"err"); }
+  finally{ busy(b,false); }
+}
+function renderNicheReport(r){
+  const box=$("#nicheReport"); if(!box) return;
+  if(!r){ box.style.display="none"; box.innerHTML=""; return; }
+  const chips=(r.title_patterns||[]).map(p=>`<span class="niche-chip">${_esc(p)}</span>`).join("");
+  const topics=(r.topics||[]).map(t=>{
+    const ap=(t.est_appeal||"").toLowerCase()==="high"?"appeal-high":"appeal-medium";
+    const apLbl=(t.est_appeal||"medium").toUpperCase();
+    const tt=_esc(t.title||"");
+    return `<div class="topic-card">
+      <div class="tt">${tt}</div>
+      <div class="ta">${_esc(t.angle||"")}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center" class="send">
+        <span class="${ap}">${apLbl} appeal</span>
+        <button class="btn outline sm" onclick="nicheUseTopic(this)" data-title="${tt}">✎ Use this →</button>
+      </div></div>`;
+  }).join("");
+  box.innerHTML=`<div class="niche-report">
+    <h3>🎯 ${_esc(r.niche||"Niche")}</h3>
+    <p class="sub" style="margin:6px 0 0">${_esc(r.why_it_works||"")}</p>
+    <div class="row" style="gap:24px;flex-wrap:wrap;margin-top:14px">
+      ${r.format?`<div style="min-width:220px;flex:1"><div class="label">Format</div><div class="sub">${_esc(r.format)}</div></div>`:""}
+      ${r.audience?`<div style="min-width:180px;flex:1"><div class="label">Audience</div><div class="sub">${_esc(r.audience)}</div></div>`:""}
+    </div>
+    ${chips?`<div class="label" style="margin-top:14px">Title patterns that work</div><div class="niche-chips">${chips}</div>`:""}
+    <div class="label" style="margin-top:16px">📝 Recommended topics to make</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:8px">${topics||'<span class="sub">No topics returned.</span>'}</div>
+  </div>`;
+  box.style.display="block";
+}
+async function nicheAnalyse(){
+  const urls=_nicheUrls(); if(!urls.length){ toast("Paste at least one channel link","err"); return; }
+  const per=Math.max(3,Math.min(parseInt($("#nichePer").value||"12",10),30));
+  const b=$("#nicheAnalyseBtn"); busy(b,true,"Analysing");
+  try{
+    const d=await api("/api/niche/analyse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,per_channel:per,nudge:$("#nicheNudge").value||""})});
+    renderNicheReport(d.report);
+    // also refresh the deck if it isn't shown yet
+    if($("#nicheDeckWrap").style.display==="none"){ try{ await nicheScan(); }catch(_){} }
+    toast("Niche analysis ready ✦","ok");
+    $("#nicheReport").scrollIntoView({behavior:"smooth",block:"start"});
+  }catch(e){ toast(e.message,"err"); }
+  finally{ busy(b,false); }
+}
+function nicheUseTopic(btn){
+  const title=btn.getAttribute("data-title")||"";
+  // Drop the chosen topic into the Script Generator's title box and jump there.
+  openView("script");
+  setTimeout(()=>{
+    const t=$("#scTitle");
+    if(t){ t.value=title; t.focus(); t.scrollIntoView({behavior:"smooth",block:"center"}); }
+    toast("Topic sent to Script Generator — add a description and Generate","ok");
+  },200);
+}
+function renderNiche(){
+  _nicheCount();
+  // restore persisted report for this project
+  try{ if(STATE && STATE.niche_report){ renderNicheReport(STATE.niche_report); } else { renderNicheReport(null); } }catch(_){}
 }
 async function renameProject(id){
   const cur=(PROJECTS.projects||[]).find(p=>p.id===id);
@@ -3535,6 +3702,16 @@ async function load(){
   // re-renders for the newly active project.
   if(typeof wf!=="undefined" && wf.built){ const stg=$("#wfStage"); if(stg) stg.querySelectorAll(".wf-node").forEach(n=>n.remove()); wf.built=false; }
   TL_CLIPS=[];  // clear stale timeline clips from previous project
+  // Kill any in-flight image batch from the PREVIOUS project. Without this the
+  // running genBatch() poll loop keeps calling _renderBatch(), which re-pushes
+  // the old project's finished frames into the new (blank) STATE.sequence —
+  // the "old generates won't go away" bug. Drop the batch id (poll loop exits),
+  // and wipe the queue/progress panel DOM so old prompts+thumbs disappear.
+  CUR_BATCH_ID=null; BATCH_CANCEL=true; try{ if(BATCH_ABORT) BATCH_ABORT.abort(); }catch(_){}
+  const _bp=$("#batchProgress"); if(_bp){ _bp.style.display="none"; _bp.innerHTML=""; }
+  const _bgb=$("#batchGenBtn"); if(_bgb) _bgb.disabled=false;
+  const _cbb=$("#cancelBatchBtn"); if(_cbb) _cbb.style.display="none";
+  setTimeout(()=>{ BATCH_CANCEL=false; }, 50);
   const data = await api("/api/state");
   STATE = data.state; CFG = data.config;
   $("#modelPill").textContent = CFG.model;
@@ -3557,6 +3734,7 @@ async function load(){
   renderEditFrames();
   renderYTAnalyser();
   renderThumbnails();
+  renderNiche();
   renderMusic();
   if(STATE.music) $("#tgUseMusic").classList.add("on");
   renderBrand();
@@ -4468,12 +4646,13 @@ async function genBatch(){
       size:$("#optSize").value, quality:$("#optQuality").value,
       continue_prev:isOn("tgContinue"), style_lock:isOn("tgStyle") };
     const first=await api("/api/images/queue",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    CUR_BATCH_ID=first.id; _renderBatch(first);
+    CUR_BATCH_ID=first.id; const _myBatch=first.id; _renderBatch(first);
     // poll until done
     while(true){
       await new Promise(r=>setTimeout(r,1200));
-      if(!CUR_BATCH_ID) break;
+      if(!CUR_BATCH_ID || CUR_BATCH_ID!==_myBatch) break;  // project switched / batch reset → stop touching STATE
       let d; try{ d=await api("/api/images/queue/"+CUR_BATCH_ID); }catch(_){ continue; }
+      if(CUR_BATCH_ID!==_myBatch) break;
       _renderBatch(d);
       if(d.done){
         const c=d.counts||{}; const rt=$("#qRetryAll"); if(rt) rt.style.display=(c.failed>0)?"inline-flex":"none";

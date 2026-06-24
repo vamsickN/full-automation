@@ -2039,6 +2039,125 @@ def api_youtube_analyze(body: YouTubeAnalyzeIn, request: Request):
     return insp
 
 
+# --------------------------------------------------------------------------- #
+#  NICHE BUILDER  — paste multiple channels, get a "mini YouTube" deck of their
+#  videos, then have the AI find the niche that works + recommend topics.
+# --------------------------------------------------------------------------- #
+class NicheScanIn(BaseModel):
+    urls: List[str] = []
+    per_channel: int = 12
+
+
+class NicheAnalyseIn(BaseModel):
+    urls: List[str] = []
+    per_channel: int = 12
+    nudge: str = ""
+    model: Optional[str] = None
+
+
+@app.post("/api/niche/scan")
+def api_niche_scan(body: NicheScanIn):
+    """Fetch recent videos from each channel link and return a flat, views-sorted
+    deck for the mini-YouTube grid. No AI cost — pure metadata."""
+    import youtube
+    urls = [u.strip() for u in (body.urls or []) if u and u.strip()]
+    if not urls:
+        raise HTTPException(400, "Add at least one channel link.")
+    per = max(3, min(int(body.per_channel or 12), 30))
+    deck = youtube.niche_scan(urls, per_channel=per)
+    if not deck.get("videos"):
+        raise HTTPException(400, "Couldn't read any videos from those links. "
+                                 "Check they're channel/playlist URLs (not single videos).")
+    return deck
+
+
+@app.post("/api/niche/analyse")
+def api_niche_analyse(body: NicheAnalyseIn, request: Request):
+    """Analyse the scanned channels: pull titles + a few transcripts, then ask
+    the AI to (1) identify the winning niche/format and (2) recommend concrete
+    video topics to make next."""
+    s = request.state.settings
+    if not _has_ai_key(s):
+        raise HTTPException(400, "No AI key set — add Claude or OpenAI key in Settings.")
+    import youtube
+    urls = [u.strip() for u in (body.urls or []) if u and u.strip()]
+    if not urls:
+        raise HTTPException(400, "Add at least one channel link.")
+    per = max(3, min(int(body.per_channel or 12), 30))
+    deck = youtube.niche_scan(urls, per_channel=per)
+    vids = deck.get("videos", [])
+    if not vids:
+        raise HTTPException(400, "Couldn't read any videos from those links.")
+
+    # Build a compact corpus: every title + view count, plus transcripts of the
+    # top 3 performers (cheap, high-signal — captures tone & subject matter).
+    lines = []
+    for c in deck.get("channels", []):
+        lines.append(f"CHANNEL: {c['channel']} ({c['count']} videos)")
+    lines.append("")
+    lines.append("VIDEOS (sorted by views, highest first):")
+    for v in vids[:60]:
+        vc = v.get("views") or 0
+        lines.append(f"- [{vc:,} views] {v.get('title','')}")
+
+    transcripts = []
+    for v in vids[:3]:
+        vid = v.get("video_id") or youtube.extract_video_id(v.get("url", ""))
+        if not vid:
+            continue
+        t = youtube.fetch_transcript(vid, max_chars=2500)
+        if t:
+            transcripts.append(f"--- Transcript excerpt: \"{v.get('title','')}\" ---\n{t}")
+
+    corpus = "\n".join(lines)
+    if transcripts:
+        corpus += "\n\nTRANSCRIPT SAMPLES:\n" + "\n\n".join(transcripts)
+    if body.nudge.strip():
+        corpus += f"\n\nUSER FOCUS / CONSTRAINT: {body.nudge.strip()}"
+
+    system = (
+        "You are a YouTube niche strategist for an AI faceless-channel studio "
+        "(stick-man / animated explainer style). Analyse the supplied channels' "
+        "videos and identify what is actually WORKING. Be concrete and data-driven "
+        "— reference the view counts and recurring title/format patterns you see. "
+        "Respond ONLY with strict JSON, no prose, in exactly this shape:\n"
+        "{\n"
+        '  "niche": "the single best niche these channels prove out, one phrase",\n'
+        '  "why_it_works": "2-3 sentences citing the view patterns / formats",\n'
+        '  "format": "the repeatable video format (length, structure, hook style)",\n'
+        '  "audience": "who watches this",\n'
+        '  "title_patterns": ["pattern 1", "pattern 2", "pattern 3"],\n'
+        '  "topics": [\n'
+        '    {"title": "ready-to-make video title", "angle": "why it hits", '
+        '"est_appeal": "high|medium"},\n'
+        "    ... 8 to 12 topic ideas ...\n"
+        "  ]\n"
+        "}"
+    )
+
+    try:
+        raw = _claude_client_for(body.model, request).chat_text(
+            corpus, system=system, max_tokens=3000)
+        data = extract_json(raw) or {}
+    except Exception as e:
+        raise HTTPException(500, f"niche analysis failed: {e}")
+
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("niche", "")
+    data.setdefault("topics", [])
+    # Persist the most recent niche report on the project so it survives reloads.
+    try:
+        st = store.load_state()
+        st["niche_report"] = {**data, "channels": deck.get("channels", []),
+                              "created": store.now()}
+        store.save_state(st)
+    except Exception:
+        pass
+    return {"report": data, "channels": deck.get("channels", []),
+            "video_count": len(vids)}
+
+
 class YouTubeMultiIn(BaseModel):
     urls: List[str] = []
     nudge: str = ""

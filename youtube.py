@@ -63,23 +63,77 @@ def is_youtube_url(url: str) -> bool:
 # --------------------------------------------------------------------------- #
 def channel_info(url: str, limit: int = 20) -> dict:
     """Flat-list a channel/playlist's recent videos.
-    Returns {channel, items:[{url,title}]}. Best-effort; never raises."""
-    out = {"channel": "", "items": []}
+    Returns {channel, items:[{url,title,thumbnail,views,duration,channel}]}.
+    Best-effort; never raises."""
+    out = {"channel": "", "channel_url": url.strip(), "items": []}
     try:
         import yt_dlp
         opts = {"quiet": True, "skip_download": True, "no_warnings": True,
                 "extract_flat": True, "playlistend": limit, "socket_timeout": 30}
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url.strip(), download=False)
-        out["channel"] = info.get("title") or info.get("channel") or ""
+        ch_name = info.get("title") or info.get("channel") or info.get("uploader") or ""
+        # yt-dlp suffixes the playlist tab onto the title (e.g. "TED - Videos").
+        # Strip the common tab suffixes so the card shows the clean channel name.
+        for _suf in (" - Videos", " - Shorts", " - Home", " - Playlists", " - Live"):
+            if ch_name.endswith(_suf):
+                ch_name = ch_name[: -len(_suf)]
+                break
+        out["channel"] = ch_name
         for e in (info.get("entries") or [])[:limit]:
             vid = e.get("id") or ""
             u = e.get("url") or (f"https://www.youtube.com/watch?v={vid}" if vid else "")
-            if u:
-                out["items"].append({"url": u, "title": e.get("title") or ""})
+            if not u:
+                continue
+            # extract_flat exposes a thumbnails list and (sometimes) view_count.
+            thumb = ""
+            thumbs = e.get("thumbnails") or []
+            if thumbs:
+                thumb = (thumbs[-1] or {}).get("url") or ""
+            if not thumb and vid:
+                thumb = f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg"
+            out["items"].append({
+                "url": u,
+                "video_id": vid,
+                "title": e.get("title") or "",
+                "thumbnail": thumb,
+                "views": e.get("view_count") or 0,
+                "duration": int(e.get("duration") or 0),
+                "channel": e.get("uploader") or e.get("channel") or ch_name,
+            })
     except Exception as e:
         _log(f"channel_info failed: {e}")
     return out
+
+
+def niche_scan(urls, per_channel: int = 12) -> dict:
+    """Fetch recent videos from multiple channels and return a flat,
+    de-duplicated deck for the 'mini YouTube' grid.
+    Returns {channels:[{channel,channel_url,count}], videos:[...]}. Never raises.
+    """
+    channels, videos, seen = [], [], set()
+    for u in urls:
+        u = (u or "").strip()
+        if not u:
+            continue
+        ci = channel_info(u, limit=per_channel)
+        kept = 0
+        for it in ci.get("items", []):
+            key = it.get("video_id") or it.get("url")
+            if key in seen:
+                continue
+            seen.add(key)
+            videos.append(it)
+            kept += 1
+        channels.append({
+            "channel": ci.get("channel") or u,
+            "channel_url": u,
+            "count": kept,
+        })
+    # Sort the deck by views desc so the strongest performers surface first,
+    # exactly like a YouTube recommendation rail.
+    videos.sort(key=lambda v: v.get("views") or 0, reverse=True)
+    return {"channels": channels, "videos": videos}
 
 
 def search_videos(query: str, limit: int = 12) -> list:
