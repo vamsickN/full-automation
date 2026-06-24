@@ -34,6 +34,7 @@ hidden += [
 datas = [
     ("static", "static"),          # the entire UI (index.html etc.)
     ("ffmpeg_bin", "ffmpeg"),      # bundled ffmpeg.exe + ffprobe.exe -> ffmpeg/
+    ("assets", "assets"),          # app icon (icon.ico / icon.png) for the window
 ]
 # onnxruntime / ctranslate2 ship native DLLs + capi data that must come along.
 for pkg in ("onnxruntime", "ctranslate2", "faster_whisper", "av"):
@@ -77,12 +78,12 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,            # no console window (GUI app)
+    console=True,            # no console window (GUI app)
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon="assets/icon.ico",
 )
 
 coll = COLLECT(

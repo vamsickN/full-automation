@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Continuity Studio</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
@@ -2509,6 +2510,7 @@ https://youtube.com/playlist?list=…" class="inp" style="font-family:var(--mono
           <button class="prov-btn" id="imgProv9router" onclick="switchImageProvider('9router')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--ink)">9Router</button>
           <button class="prov-btn" id="imgProvPollinations" onclick="switchImageProvider('pollinations')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--teal,#3fdc8c)">🆓 Pollinations</button>
           <button class="prov-btn" id="imgProvLocal" onclick="switchImageProvider('local')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--amber,#f0ac6b)">💻 Local (diffusers)</button>
+          <button class="prov-btn" id="imgProvFlow" onclick="switchImageProvider('flow')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--claude-soft,#c08cff)">🎬 Flow (extension)</button>
         </div>
 
         <!-- derouter / OpenAI image section -->
@@ -2632,6 +2634,27 @@ https://youtube.com/playlist?list=…" class="inp" style="font-family:var(--mono
             <button class="btn sm" onclick="connectLocalImage()">💻 Use local model (free)</button>
           </div>
           <div id="imgLocalInstall" style="display:none; background:rgba(255,170,0,.08); border:1px solid rgba(255,170,0,.3); border-radius:8px; padding:8px; font-size:12px; margin-top:8px; white-space:pre-wrap"></div>
+        </div>
+
+        <!-- Flow (browser extension) image section — images generated in Google Flow -->
+        <div id="imgFlowSection" style="display:none">
+          <div id="imgFlowStatus" class="pill" style="margin-top:8px; width:max-content"><span class="dot"></span><span>extension drives Google Flow</span></div>
+          <p class="sub" style="font-size:11px; color:var(--muted); margin:6px 0 8px">
+            <strong style="color:var(--claude-soft,#c08cff)">No API key, no derouter.</strong>
+            Images are generated externally in <a href="https://labs.google/flow" target="_blank" rel="noopener" style="color:var(--claude-soft,#c08cff)">Google Flow</a> (Nano Banana Pro / NB2) by the <strong>Flow Bridge Chrome extension</strong>.
+            <br>CS just builds the prompts, characters &amp; style refs — it does <em>not</em> call any image API itself.
+            <br><span style="color:var(--amber-soft)">How to use:</span>
+          </p>
+          <ol style="font-size:12px; color:var(--muted); margin:0 0 8px; padding-left:18px; line-height:1.7">
+            <li>Pick your topic &amp; generate the script/prompts &amp; characters here, as normal.</li>
+            <li>Load the <code style="font-family:var(--mono)">flow-tool/extension</code> in <code style="font-family:var(--mono)">chrome://extensions</code> (Developer mode → Load unpacked).</li>
+            <li>Open <a href="https://labs.google/flow" target="_blank" rel="noopener" style="color:var(--claude-soft,#c08cff)">labs.google/flow</a> (logged in) → the "Flow Bridge" panel appears.</li>
+            <li><b>Pull job → Run.</b> Frames land back here automatically; then <b>stitch</b> as usual.</li>
+          </ol>
+          <div class="fld" style="display:flex; gap:10px; flex-wrap:wrap">
+            <button class="btn sm" onclick="switchImageProvider('flow')">🎬 Use Flow (free, via extension)</button>
+            <a class="btn sm" href="https://labs.google/flow" target="_blank" rel="noopener" style="text-decoration:none">Open Flow ↗</a>
+          </div>
         </div>
       </div>
 
@@ -3993,13 +4016,13 @@ async function switchImageProvider(p){
   }catch(e){ toast(e.message,"err"); }
   renderImageProviderUI();
   refreshProviderUI();
-  const labels={derouter:"derouter / OpenAI","9router":"9Router (local)","pollinations":"Pollinations (free, no key)","local":"Local diffusers (free, runs on this machine)"};
+  const labels={derouter:"derouter / OpenAI","9router":"9Router (local)","pollinations":"Pollinations (free, no key)","local":"Local diffusers (free, runs on this machine)",flow:"Google Flow (free, via Chrome extension)"};
   toast("Image provider → "+(labels[p]||p),"ok");
 }
 function renderImageProviderUI(){
   const p=CFG.image_provider||"derouter";
-  const btnMap={derouter:"imgProvDerouter","9router":"imgProv9router","pollinations":"imgProvPollinations","local":"imgProvLocal"};
-  const accent={derouter:"var(--amber-soft)",pollinations:"var(--teal,#3fdc8c)",local:"var(--amber,#f0ac6b)"};
+  const btnMap={derouter:"imgProvDerouter","9router":"imgProv9router",pollinations:"imgProvPollinations",local:"imgProvLocal",flow:"imgProvFlow"};
+  const accent={derouter:"var(--amber-soft)",pollinations:"var(--teal,#3fdc8c)",local:"var(--amber,#f0ac6b)",flow:"var(--claude-soft,#c08cff)"};
   Object.keys(btnMap).forEach(k=>{
     const b=$("#"+btnMap[k]); if(!b) return;
     const on=p===k;
@@ -4008,11 +4031,12 @@ function renderImageProviderUI(){
     b.style.color=on?col:(k==="derouter"?"var(--ink)":col);
     b.style.boxShadow=on?("inset 0 -2px 0 "+col):"none";
   });
-  const ds=$("#imgDerouterSection"), ns=$("#img9routerSection"), ps=$("#imgPollinationsSection"), ls=$("#imgLocalSection");
+  const ds=$("#imgDerouterSection"), ns=$("#img9routerSection"), ps=$("#imgPollinationsSection"), ls=$("#imgLocalSection"), fs=$("#imgFlowSection");
   if(ds) ds.style.display=p==="derouter"?"block":"none";
   if(ns) ns.style.display=p==="9router"?"block":"none";
   if(ps) ps.style.display=p==="pollinations"?"block":"none";
   if(ls) ls.style.display=p==="local"?"block":"none";
+  if(fs) fs.style.display=p==="flow"?"block":"none";
   if(p==="9router"){
     if($("#set9rImgBase") && !$("#set9rImgBase").value) $("#set9rImgBase").value=CFG.ninerouter_image_base_url||"http://localhost:20128/v1";
     if($("#set9rImgModel") && !$("#set9rImgModel").value) $("#set9rImgModel").value=CFG.ninerouter_image_model||"gpt-image-2";

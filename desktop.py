@@ -92,7 +92,7 @@ def _writable_dir():
     return d
 
 
-def _free_port(preferred=8000):
+def _free_port(preferred=8765):
     """Return a usable localhost port — try the preferred one first."""
     for p in (preferred, 8000, 8765, 8123, 0):
         try:

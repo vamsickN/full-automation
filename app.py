@@ -56,6 +56,21 @@ from claude_client import ClaudeClient, extract_json
 store.init()
 app = FastAPI(title="Continuity Studio")
 
+# CORS — allow the Flow browser extension (runs on labs.google) to call the
+# /api/flow/* bridge endpoints. Extensions send Origin: chrome-extension://...
+# and null; allow all so any browser context can reach the local bridge.
+try:
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+except Exception:
+    pass
+
 
 # --- Writable config dir (packaged-app aware) ------------------------------ #
 # In dev, vault.json / users.json / codes.json live next to this module. In a
@@ -387,6 +402,8 @@ def _has_image_key(request: Request) -> bool:
         return True   # no key required — public endpoint
     if s.get("image_provider") == "local":
         return True   # no key required — local model
+    if s.get("image_provider") == "flow":
+        return True   # no key — images generated externally via the Flow browser extension
     return bool(s.get("api_key"))
 
 
@@ -578,6 +595,13 @@ def _voice_default_id(s):
 def index():
     """The Continuity Studio tool."""
     return FileResponse(os.path.join(os.path.dirname(__file__), "static", "index.html"))
+
+
+@app.get("/favicon.png")
+@app.get("/favicon.ico")
+def favicon():
+    """App icon (browser tab / fallback). Bundled in static/favicon.png."""
+    return FileResponse(os.path.join(os.path.dirname(__file__), "static", "favicon.png"))
 
 
 # --------------------------------------------------------------------------- #
@@ -1760,6 +1784,195 @@ def api_images_job_retry(job_id: str, request: Request):
 @app.get("/api/images/throttle")
 def api_images_throttle():
     return image_queue.throttle_status()
+
+
+# --------------------------------------------------------------------------- #
+#  FLOW BRIDGE — for the Chrome extension that drives Google Flow's UI.
+#
+#  Instead of calling derouter, the extension pulls a "flow job" (master prompt,
+#  style notes, ordered per-frame prompts, plus the STYLE reference image(s) and
+#  CHARACTER sheets as data: URLs it can attach in Flow), generates each image in
+#  Flow's browser UI (Nano Banana Pro / NB2), and POSTs the produced PNGs back.
+#  We then save them into the project sequence exactly like a normal render, so
+#  the rest of the app (editor/stitch) is unchanged.
+# --------------------------------------------------------------------------- #
+def _b64_data_url(img_bytes: bytes, mime="image/png") -> str:
+    return f"data:{mime};base64," + _b64.b64encode(img_bytes).decode("ascii")
+
+
+def _read_image_data_url(url):
+    try:
+        return _b64_data_url(store.read_image(url))
+    except Exception:
+        return None
+
+
+@app.get("/api/flow/job")
+def api_flow_job(request: Request, source: str = "sequence"):
+    """Everything the extension needs to drive Flow for the CURRENT project.
+
+    source='sequence' (default): use prompts from the already-built sequence
+        (each shot's `prompt`). Use this to (re)generate frames via Flow.
+    Returns refs as data: URLs so the extension can upload them into Flow.
+    """
+    st = store.load_state()
+    pid = store.current_project_id()
+
+    style_refs = []
+    for sf in (st.get("style_frames") or [])[:config.STYLE_REF_COUNT]:
+        d = _read_image_data_url(sf.get("url"))
+        if d:
+            style_refs.append({"id": sf.get("id"), "data_url": d})
+
+    characters = []
+    for c in (st.get("characters") or []):
+        d = _read_image_data_url(c.get("sheet_url")) if c.get("sheet_url") else None
+        characters.append({
+            "id": c.get("id"), "name": c.get("name"),
+            "description": c.get("description", ""),
+            "sheet_data_url": d,
+            "has_sheet": bool(d),
+        })
+
+    frames = []
+    for s in (st.get("sequence") or []):
+        frames.append({
+            "id": s.get("id"),
+            "index": s.get("index"),
+            "prompt": s.get("prompt", ""),
+            "full_prompt": s.get("full_prompt", ""),
+            "characters": s.get("characters", []),
+            "has_image": bool(s.get("image_url")),
+        })
+
+    # Fallback: if no rendered sequence yet (Flow workflow = build script, don't
+    # render in CS), derive frames straight from the script scenes so the
+    # extension has prompts to generate. Each scene's `prompt` is the VISUAL
+    # description (already alias-normalised when the script was saved).
+    source_used = "sequence"
+    if not frames:
+        scenes = ((st.get("script") or {}).get("scenes") or [])
+        for i, sc in enumerate(scenes, 1):
+            if not isinstance(sc, dict):
+                continue
+            vis = (sc.get("prompt") or sc.get("visual") or sc.get("action") or "").strip()
+            if not vis:
+                continue
+            frames.append({
+                "id": f"scene_{sc.get('n', i)}",
+                "index": sc.get("n", i),
+                "prompt": vis,
+                "full_prompt": vis,
+                "characters": [],
+                "has_image": False,
+                "from_script": True,
+            })
+        if frames:
+            source_used = "script"
+
+    return {
+        "project_id": pid,
+        "project_name": (store.list_projects() or {}).get("current_name", ""),
+        "master_prompt": st.get("master_prompt", ""),
+        "style_notes": st.get("style_notes", ""),
+        "protagonist": _project_protagonist(st),
+        "style_refs": style_refs,
+        "characters": characters,
+        "frames": frames,
+        "source": source_used,
+        "size": config.DEFAULT_SIZE,
+    }
+
+
+class FlowCharacterIn(BaseModel):
+    character_id: str
+    image: str                          # data: URL or bare base64 PNG
+
+
+@app.post("/api/flow/character")
+def api_flow_save_character(body: FlowCharacterIn):
+    """Save a character sheet that the extension generated in Flow."""
+    raw = body.image.split(",", 1)[-1] if body.image.startswith("data:") else body.image
+    try:
+        img = _b64.b64decode(raw)
+    except Exception as e:
+        raise HTTPException(400, f"bad image base64: {e}")
+    with _state_write_lock:
+        st = store.load_state()
+        found = None
+        for c in st.get("characters", []):
+            if c.get("id") == body.character_id:
+                found = c
+                break
+        if not found:
+            raise HTTPException(404, "no such character")
+        found["sheet_url"] = store.write_image("characters", img)
+        store.save_state(st)
+    return {"ok": True, "character_id": body.character_id,
+            "sheet_url": found["sheet_url"]}
+
+
+class FlowFrameIn(BaseModel):
+    image: str                          # data: URL or bare base64 PNG
+    prompt: str = ""
+    frame_id: Optional[str] = None      # existing shot id to UPDATE; else append
+    model: str = "flow"                 # 'nano-banana-pro' | 'nano-banana-2' | 'flow'
+
+
+@app.post("/api/flow/frame")
+def api_flow_save_frame(body: FlowFrameIn):
+    """Save a single frame the extension generated in Flow. If frame_id matches
+    an existing shot, replace its image (regenerate-in-place); otherwise append
+    a new shot to the sequence."""
+    raw = body.image.split(",", 1)[-1] if body.image.startswith("data:") else body.image
+    try:
+        img = _b64.b64decode(raw)
+    except Exception as e:
+        raise HTTPException(400, f"bad image base64: {e}")
+    url = store.write_image("images", img)
+    with _state_write_lock:
+        st = store.load_state()
+        rec = None
+        if body.frame_id:
+            for s in st["sequence"]:
+                if s["id"] == body.frame_id:
+                    s["image_url"] = url
+                    s["mode"] = f"flow:{body.model}"
+                    if body.prompt.strip():
+                        s["prompt"] = body.prompt.strip()
+                    rec = s
+                    break
+        if rec is None:
+            rec = {
+                "id": store.new_id("shot"),
+                "index": len(st["sequence"]) + 1,
+                "prompt": body.prompt.strip(),
+                "full_prompt": body.prompt.strip(),
+                "image_url": url,
+                "mode": f"flow:{body.model}",
+                "size": config.DEFAULT_SIZE, "quality": "flow",
+                "characters": [], "refs": [],
+                "continued_from": None, "vo": "",
+                "created": store.now(),
+            }
+            st["sequence"].append(rec)
+        store.save_state(st)
+    store.log_usage("image", 1, 0.0, project_id=store.current_project_id())
+    return {"ok": True, "frame": rec}
+
+
+@app.get("/api/flow/status")
+def api_flow_status():
+    """Quick liveness probe the extension hits to confirm the bridge is up and
+    which project is active."""
+    pid = store.current_project_id()
+    st = store.load_state()
+    return {
+        "ok": True, "bridge": "flow", "project_id": pid,
+        "frames": len(st.get("sequence") or []),
+        "characters": len(st.get("characters") or []),
+        "style_refs": len(st.get("style_frames") or []),
+    }
 
 
 @app.delete("/api/sequence/{sid}")
@@ -9521,3 +9734,130 @@ def api_a2v_cost_estimate(scenes: int = 10, characters: int = 1, quality: str = 
 def api_a2v_presets():
     """Return available export presets with their settings."""
     return {"presets": _EXPORT_PRESETS}
+
+
+# ============================================================================
+#  FLOW BRIDGE — Chrome extension bridge for Google Flow image generation
+# ============================================================================
+_FLOW_DIR = os.path.join(os.environ.get("DATA_DIR", os.path.join(
+    os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ContinuityStudio")), "flow_frames")
+os.makedirs(_FLOW_DIR, exist_ok=True)
+
+
+@app.get("/api/flow/status")
+def api_flow_status():
+    """Liveness + frame counts for the extension status badge."""
+    frames = 0
+    chars = 0
+    try:
+        for name in os.listdir(_FLOW_DIR):
+            if name.startswith("frame_"):
+                frames += 1
+            elif name.startswith("char_"):
+                chars += 1
+    except Exception:
+        pass
+    return {"ok": True, "frames": frames, "characters": chars, "bridge": "cs://127.0.0.1:8765"}
+
+
+@app.get("/api/flow/job")
+def api_flow_job():
+    """
+    Return the current autopilot job payload for the extension:
+    - style reference images (data URLs)
+    - character-sheet prompts
+    - ordered frame prompts (each with prev-frame ref + matched character)
+    """
+    st = store.load_state()
+    autopilot = (st.get("autopilot_run") or {})
+    script = st.get("script") or []
+    style_frames = st.get("style_frames") or []
+    characters = st.get("characters") or []
+    prompts = []
+    for i, scene in enumerate(script):
+        text = scene.get("voice_over") or scene.get("content") or scene.get("prompt", "")
+        prompt = {
+            "frame_index": i,
+            "prompt": text,
+            "visual": scene.get("visual") or scene.get("prompt", ""),
+            "characters": [c.get("name", "") for c in characters],
+        }
+        if i > 0 and i <= len(prompts):
+            prev = os.path.join(_FLOW_DIR, f"frame_{i-1:05d}.png")
+            if os.path.exists(prev):
+                prompt["prev_frame"] = f"file:///{prev.replace(os.sep, '/')}"
+        prompts.append(prompt)
+
+    char_prompts = []
+    for c in characters:
+        char_prompts.append({
+            "character_id": c.get("id") or c.get("name", ""),
+            "prompt": c.get("description") or c.get("prompt", ""),
+        })
+
+    def _data_url(path):
+        if not path or not os.path.exists(path):
+            return ""
+        import base64
+        mime = "image/png"
+        with open(path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode()
+        return f"data:{mime};base64,{b64}"
+
+    style_refs = [{"id": sf.get("id", f"sf_{i}"), "data_url": _data_url(sf.get("url", "").replace("file:///", ""))}
+                  for i, sf in enumerate(style_frames)]
+    return {
+        "ok": True,
+        "project": st.get("project_name", ""),
+        "style_refs": style_refs,
+        "character_prompts": char_prompts,
+        "frames": prompts,
+        "total_frames": len(prompts),
+        "total_characters": len(char_prompts),
+    }
+
+
+class FlowFrameIn(BaseModel):
+    image: str          # data:image/png;base64,...
+    prompt: str = ""
+    frame_id: Optional[str] = None
+    model: Optional[str] = None
+
+
+@app.post("/api/flow/frame")
+def api_flow_frame(body: FlowFrameIn):
+    """Save a generated frame from the extension into the project's flow_frames dir."""
+    try:
+        header, b64 = body.image.split(",", 1)
+        ext = ".png" if "png" in header else ".jpg"
+        idx = body.frame_id or f"frame_{int(time.time()*1000):012d}"
+        path = os.path.join(_FLOW_DIR, f"{idx}{ext}")
+        with open(path, "wb") as fh:
+            fh.write(base64.b64decode(b64))
+        return {"ok": True, "path": path, "frame_id": idx}
+    except Exception as e:
+        raise HTTPException(400, f"bad image payload: {e}")
+
+
+class FlowCharIn(BaseModel):
+    image: str
+    character_id: str = ""
+    model: Optional[str] = None
+
+
+@app.post("/api/flow/character")
+def api_flow_character(body: FlowCharIn):
+    """Save a generated character sheet from the extension."""
+    try:
+        header, b64 = body.image.split(",", 1)
+        ext = ".png" if "png" in header else ".jpg"
+        cid = body.character_id or f"char_{int(time.time()*1000):012d}"
+        path = os.path.join(_FLOW_DIR, f"char_{cid}{ext}")
+        with open(path, "wb") as fh:
+            fh.write(base64.b64decode(b64))
+        return {"ok": True, "path": path, "character_id": cid}
+    except Exception as e:
+        raise HTTPException(400, f"bad image payload: {e}")
+
+
+import base64
