@@ -41,3 +41,10 @@ ffmpeg_bin/
 # installer_output/ is NOT gitignored — the final Setup.exe is pushed (user-requested).
 # *.exe is NOT gitignored — same reason; the source *.exe artifacts in dist/ stay gitignored via the dist/ line above.
 
+# NEVER commit the bare PyInstaller bootloader at repo root. It is a one-folder
+# build stub that REQUIRES its sibling _internal\ folder (gitignored via dist/).
+# Shipping it alone makes every user hit:
+#   "Failed to load Python DLL ...\_internal\python312.dll — module not found".
+# End users must run the installer (installer_output\ContinuityStudio-Setup.exe).
+/ContinuityStudio.exe
+
