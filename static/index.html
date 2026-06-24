@@ -546,6 +546,16 @@
   .appeal-high{color:#3ddc84; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px}
   .appeal-medium{color:var(--amber); font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:.5px}
 
+  /* Channel Analyser on Workflow */
+  .wf-channel-analyser{border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:linear-gradient(180deg,rgba(168,124,255,.04),transparent)}
+  .wf-channel-analyser details[open] #wfChArrow{transform:rotate(90deg)}
+  .wf-channel-analyser .yt-grid{grid-template-columns:repeat(auto-fill,minmax(190px,1fr)); gap:12px 10px}
+  .wf-channel-analyser .yt-card{gap:7px}
+  .wf-channel-analyser .yt-thumb{border-radius:8px}
+  .wf-channel-analyser .yt-vtitle{font-size:12px; -webkit-line-clamp:2}
+  .wf-channel-analyser .yt-sub{font-size:11px}
+  .wf-channel-analyser .yt-av{width:26px; height:26px; font-size:11px}
+
   /* ============ PROJECT SWITCHER ============ */
   .proj-switch{position:relative; margin-left:8px}
   .proj-btn{display:flex; align-items:center; gap:10px; background:rgba(20,17,28,.7); border:1px solid var(--line2);
@@ -1475,6 +1485,41 @@
           <div id="apProgress" style="margin-top:12px; display:none"></div>
           <div id="apResult" style="margin-top:12px"></div>
         </div>
+      </div>
+
+      <!-- CHANNEL ANALYSER — inline on workflow, reuses Niche Builder backend -->
+      <div class="wf-channel-analyser" id="wfChannelAnalyser">
+        <details id="wfChDetails">
+          <summary style="cursor:pointer; font-family:var(--disp); font-weight:700; font-size:15px; color:var(--violet); padding:12px 18px; user-select:none; list-style:none; display:flex; align-items:center; gap:10px">
+            <svg width="10" height="10" viewBox="0 0 10 10" style="transition:transform .2s" id="wfChArrow"><path d="M2 1l6 4-6 4z" fill="var(--violet)"/></svg>
+            📺 Channel Analyser
+            <span class="sub" style="font-weight:400; font-size:12px; margin:0">— paste competitor channels, see what works, find your niche</span>
+          </summary>
+          <div style="padding:0 18px 18px">
+            <div class="row" style="gap:14px; flex-wrap:wrap; align-items:flex-start">
+              <div class="grow" style="min-width:300px; flex:2">
+                <label class="label">Channel / playlist links — one per line <span id="wfChCount" style="color:var(--violet)"></span></label>
+                <textarea id="wfChUrls" rows="3" oninput="_wfChCount()" placeholder="https://youtube.com/@stickman&#10;https://youtube.com/@competitor/videos" class="inp" style="font-family:var(--mono); font-size:12px"></textarea>
+              </div>
+              <div style="min-width:200px; flex:1">
+                <label class="label">Focus (optional)</label>
+                <input id="wfChNudge" class="inp" placeholder="e.g. kids content, shorts only" />
+                <div class="row" style="gap:8px; margin-top:8px; flex-wrap:wrap">
+                  <button class="btn sm" id="wfChScanBtn" onclick="wfChScan()">▶ Scan</button>
+                  <button class="btn outline sm" id="wfChAnalyseBtn" onclick="wfChAnalyse()" style="color:var(--violet); border-color:var(--violet)">🧠 Analyse niche</button>
+                </div>
+              </div>
+            </div>
+            <div id="wfChReport" style="display:none; margin-top:14px"></div>
+            <div id="wfChDeckWrap" style="display:none; margin-top:16px">
+              <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px">
+                <span style="font-family:var(--disp); font-weight:700; font-size:14px; color:var(--violet)">📺 Videos</span>
+                <span id="wfChDeckCount" class="sub" style="margin:0"></span>
+              </div>
+              <div id="wfChDeck" class="yt-grid" style="max-height:420px; overflow-y:auto; padding-right:6px"></div>
+            </div>
+          </div>
+        </details>
       </div>
 
       <!-- ENGINE CORE — live HUD that drives the canvas like a running machine -->
@@ -3680,6 +3725,72 @@ function renderNiche(){
   _nicheCount();
   // restore persisted report for this project
   try{ if(STATE && STATE.niche_report){ renderNicheReport(STATE.niche_report); } else { renderNicheReport(null); } }catch(_){}
+}
+
+/* ---------- workflow channel analyser (reuses niche backend) ---------- */
+function _wfChCount(){ const n=($("#wfChUrls").value||"").split("\n").map(x=>x.trim()).filter(Boolean).length; const el=$("#wfChCount"); if(el) el.textContent=n?`(${n})`:""; }
+function _wfChUrls(){ return ($("#wfChUrls").value||"").split("\n").map(x=>x.trim()).filter(Boolean); }
+function _wfRenderDeck(deck){
+  const wrap=$("#wfChDeckWrap"), grid=$("#wfChDeck");
+  const vids=(deck&&deck.videos)||[];
+  if(!vids.length){ if(wrap) wrap.style.display="none"; return; }
+  if(wrap) wrap.style.display="block";
+  $("#wfChDeckCount").textContent=`· ${vids.length} videos`;
+  grid.innerHTML=vids.map(_ytCard).join("");
+}
+function _wfRenderReport(r){
+  const box=$("#wfChReport"); if(!box) return;
+  if(!r){ box.style.display="none"; box.innerHTML=""; return; }
+  const chips=(r.title_patterns||[]).map(p=>`<span class="niche-chip">${_esc(p)}</span>`).join("");
+  const topics=(r.topics||[]).map(t=>{
+    const ap=(t.est_appeal||"").toLowerCase()==="high"?"appeal-high":"appeal-medium";
+    const tt=_esc(t.title||"");
+    return `<div class="topic-card">
+      <div class="tt">${tt}</div>
+      <div class="ta">${_esc(t.angle||"")}</div>
+      <div style="display:flex;justify-content:space-between;align-items:center" class="send">
+        <span class="${ap}">${(t.est_appeal||"medium").toUpperCase()}</span>
+        <button class="btn outline sm" onclick="wfChUseTopic(this)" data-title="${tt}">▶ Use in Autopilot</button>
+      </div></div>`;
+  }).join("");
+  box.innerHTML=`<div class="niche-report" style="padding:14px 16px">
+    <h3 style="font-size:17px">🎯 ${_esc(r.niche||"Niche")}</h3>
+    <p class="sub" style="margin:4px 0 0; font-size:12.5px">${_esc(r.why_it_works||"")}</p>
+    ${r.format?`<div class="sub" style="margin:6px 0 0; font-size:12px"><b>Format:</b> ${_esc(r.format)}</div>`:""}
+    ${chips?`<div class="niche-chips" style="margin-top:8px">${chips}</div>`:""}
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:10px;margin-top:10px">${topics}</div>
+  </div>`;
+  box.style.display="block";
+}
+async function wfChScan(){
+  const urls=_wfChUrls(); if(!urls.length){ toast("Paste at least one channel link","err"); return; }
+  const b=$("#wfChScanBtn"); busy(b,true,"Scanning");
+  try{
+    const deck=await api("/api/niche/scan",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,per_channel:12})});
+    _wfRenderDeck(deck);
+    toast(`${deck.videos.length} videos from ${deck.channels.length} channel(s)`,"ok");
+  }catch(e){ toast(e.message,"err"); }
+  finally{ busy(b,false); }
+}
+async function wfChAnalyse(){
+  const urls=_wfChUrls(); if(!urls.length){ toast("Paste at least one channel link","err"); return; }
+  const b=$("#wfChAnalyseBtn"); busy(b,true,"Analysing");
+  try{
+    const d=await api("/api/niche/analyse",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({urls,per_channel:12,nudge:$("#wfChNudge").value||""})});
+    _wfRenderReport(d.report);
+    if($("#wfChDeckWrap").style.display==="none"){ try{ await wfChScan(); }catch(_){} }
+    toast("Niche analysis ready","ok");
+  }catch(e){ toast(e.message,"err"); }
+  finally{ busy(b,false); }
+}
+function wfChUseTopic(btn){
+  const title=btn.getAttribute("data-title")||"";
+  // Put the topic into the autopilot nudge and scroll up to the URL box
+  const nudge=$("#apNudge");
+  if(nudge){ nudge.value=title; }
+  const ap=$("#apUrl");
+  if(ap) ap.scrollIntoView({behavior:"smooth",block:"center"});
+  toast("Topic set as autopilot nudge — paste a reference link and run","ok");
 }
 async function renameProject(id){
   const cur=(PROJECTS.projects||[]).find(p=>p.id===id);
