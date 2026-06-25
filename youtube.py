@@ -495,6 +495,24 @@ def ingest(url: str, max_frames: int = 12) -> dict:
             "Couldn't read this video — no transcript, frames, or thumbnail "
             "available. Try a different link (one with captions).")
 
+    # WHISPER FALLBACK for the way-of-speaking. fetch_transcript only reads
+    # YouTube CAPTIONS — videos with captions disabled (age-gated, music, many
+    # Shorts) return "", which means Claude gets NO transcript and can't learn
+    # the narration style. When that happens but we DID download the video file
+    # for frames, transcribe that local file with faster-whisper so the speaking
+    # style is still captured. Best-effort: never fail ingest over this.
+    if not transcript and _path and os.path.exists(_path):
+        try:
+            import transcribe as _transmod
+            if _transmod.local_available():
+                _log(f"no captions for {vid} — transcribing audio with Whisper")
+                _tr = _transmod.transcribe_audio(_path, engine="local")
+                transcript = (_tr.get("text") or "").strip() if isinstance(_tr, dict) else ""
+                if transcript:
+                    _log(f"whisper transcript ok ({len(transcript)} chars)")
+        except Exception as _we:
+            _log(f"whisper fallback failed for {vid}: {_we}")
+
     return {
         "video_id": vid, "url": url,
         "title": meta.get("title", ""), "channel": meta.get("channel", ""),

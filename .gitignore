@@ -48,3 +48,8 @@ ffmpeg_bin/
 # End users must run the installer (installer_output\ContinuityStudio-Setup.exe).
 /ContinuityStudio.exe
 
+
+# local test artifacts
+_local*.log
+_uvicorn*.log
+_t_cfg.py

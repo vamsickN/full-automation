@@ -212,6 +212,17 @@ SUPPORTED_QUALITIES = ["low", "medium", "high", "auto"]
 # them into one grid so there's no hard wire-format cap.
 STYLE_REF_COUNT = int(_get("STYLE_REF_COUNT", "6"))
 
+# CHARACTER-BLEED GUARD. Style frames are whole frames from the SOURCE video and
+# therefore usually CONTAIN that video's own characters. If they outnumber the
+# attached character sheets in the edit, the model draws the source video's
+# person instead of our cast (the "wrong Viking" bug). So when a scene HAS a
+# matched character sheet, we feed only a few style frames (enough to convey art
+# style, too few to dominate identity); when it has NONE (pure scenery), we still
+# cap them so a stray person inside a style frame is less likely to become the
+# subject. Both are bounded by STYLE_REF_COUNT. Tune via .env.
+STYLE_FRAMES_WITH_CHARS = int(_get("STYLE_FRAMES_WITH_CHARS", "2"))
+STYLE_FRAMES_NO_CHARS = int(_get("STYLE_FRAMES_NO_CHARS", "3"))
+
 # Hard ceiling on how many reference images go into a SINGLE image-edit call
 # (style frames + character sheets + previous frame, combined). Anchors the
 # upper bound so we never overflow the model/proxy. gpt-image-2 / derouter

@@ -1388,20 +1388,39 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
     # 3. style anchors (reference video frames as visual refs)
     style_frames = st["style_frames"] if style_lock else []
 
-    # 4. assemble refs: style frames FIRST → characters → previous frame
-    # Style frames lead so they get the most prominent position in the contact
-    # sheet (top-left, highest visual weight) and are seen first in multi-image mode.
+    # 4. assemble refs.
+    # IMPORTANT (character-bleed bug): the style frames are whole frames lifted
+    # from the SOURCE video — they almost always CONTAIN that video's own
+    # characters. If we flood the edit with STYLE_REF_COUNT (default 6) of them,
+    # the source video's character outnumbers the 1-2 attached character sheets
+    # in the contact grid and the model draws the SOURCE video's person instead
+    # of our cast — even in scenes that named a character or that wanted no
+    # person at all. Two-part defence:
+    #   (a) When character sheets ARE attached, hard-cap style frames to a small
+    #       number (enough to convey art style, too few to dominate identity),
+    #       and put the CHARACTER sheets first so they carry the most visual
+    #       weight (top-left of the grid / seen first in multi-image mode).
+    #   (b) When NO character sheet is attached (pure-scenery scene), still cap
+    #       style frames so a stray person inside them is less likely to be
+    #       treated as the subject; the strengthened STYLE-REF caption + prompt
+    #       text tell the model to ignore any people shown in style frames.
+    _has_chars = bool(matched)
+    _style_cap = config.STYLE_FRAMES_WITH_CHARS if _has_chars else config.STYLE_FRAMES_NO_CHARS
+    _style_cap = max(0, min(int(_style_cap), int(config.STYLE_REF_COUNT)))
+
     refs, ref_meta = [], []
-    for sf in style_frames[:config.STYLE_REF_COUNT]:
-        try:
-            refs.append(store.read_image(sf["url"]))
-            ref_meta.append({"type": "style"})
-        except Exception:
-            pass
+    # Character sheets FIRST when present — they define who appears, so they must
+    # outrank the source-video style frames in the contact grid.
     for c in matched:
         try:
             refs.append(store.read_image(c["sheet_url"]))
             ref_meta.append({"type": "character", "name": c["name"]})
+        except Exception:
+            pass
+    for sf in style_frames[:_style_cap]:
+        try:
+            refs.append(store.read_image(sf["url"]))
+            ref_meta.append({"type": "style"})
         except Exception:
             pass
     # Smart continuity: feed the previous frame as an IMAGE ref ONLY when this
@@ -1419,10 +1438,10 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
             micro_cut = False
 
     # Hard ceiling: never send more than MAX_REF_IMAGES into one edit call.
-    # Style anchors lead the list, so if we must trim we drop the LAST style
-    # anchors first while always keeping the character sheet(s) and (if present)
-    # the previous-frame continuity ref — those are load-bearing for identity
-    # and continuity, whereas extra style anchors are diminishing returns.
+    # If we must trim we drop STYLE anchors first (by type) while always keeping
+    # the character sheet(s) and (if present) the previous-frame continuity ref —
+    # those are load-bearing for identity and continuity, whereas extra style
+    # anchors are diminishing returns. (Character sheets now lead the ref list.)
     _max_refs = max(1, int(getattr(config, "MAX_REF_IMAGES", 10)))
     if len(refs) > _max_refs:
         _style_idx = [i for i, m in enumerate(ref_meta) if m.get("type") == "style"]
@@ -1452,7 +1471,7 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
         def _ref_label(m):
             t = m.get("type")
             if t == "style":
-                return "STYLE REF — COPY ART STYLE, NOT COMPOSITION"
+                return "STYLE REF — COPY ART STYLE ONLY; IGNORE ITS CHARACTERS/PEOPLE/COMPOSITION"
             if t == "character":
                 return f"CHAR: {(m.get('name') or '').strip()}"[:22]
             if t == "previous":
@@ -1609,20 +1628,23 @@ def _render_one_for_queue(g_prompt, params, settings, project_id):
     micro_cut = (shot_relation == "continue") and bool(prev)
 
     refs, ref_meta = [], []
-    # Style anchors FIRST so the STYLE REF gets the dominant top cell of the
-    # contact sheet (and is seen first in multi-image mode) — this is the look
-    # every frame must copy. Then character sheets (identity), then the previous
-    # frame (only on a micro-cut).
-    for sf in style_frames[:config.STYLE_REF_COUNT]:
-        try:
-            refs.append(store.read_image(sf["url"]))
-            ref_meta.append({"type": "style"})
-        except Exception:
-            pass
+    # Character bleed fix (see _render_one): style frames carry the SOURCE
+    # video's characters, so flooding the edit with them makes the model draw
+    # that video's person instead of our cast. Put CHARACTER sheets first
+    # (dominant grid weight) and hard-cap style frames when a sheet is present.
+    _has_chars = bool(matched)
+    _style_cap = config.STYLE_FRAMES_WITH_CHARS if _has_chars else config.STYLE_FRAMES_NO_CHARS
+    _style_cap = max(0, min(int(_style_cap), int(config.STYLE_REF_COUNT)))
     for c in matched:
         try:
             refs.append(store.read_image(c["sheet_url"]))
             ref_meta.append({"type": "character", "name": c["name"]})
+        except Exception:
+            pass
+    for sf in style_frames[:_style_cap]:
+        try:
+            refs.append(store.read_image(sf["url"]))
+            ref_meta.append({"type": "style"})
         except Exception:
             pass
     if micro_cut:
@@ -1649,7 +1671,7 @@ def _render_one_for_queue(g_prompt, params, settings, project_id):
         def _ref_label(m):
             t = m.get("type")
             if t == "style":
-                return "STYLE REF — COPY ART STYLE, NOT COMPOSITION"
+                return "STYLE REF — COPY ART STYLE ONLY; IGNORE ITS CHARACTERS/PEOPLE/COMPOSITION"
             if t == "character":
                 return f"CHAR: {(m.get('name') or '').strip()}"[:22]
             if t == "previous":

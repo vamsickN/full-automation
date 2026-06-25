@@ -14,15 +14,50 @@ import config  # noqa: F401
 # --------------------------------------------------------------------------- #
 #  Character matching
 # --------------------------------------------------------------------------- #
-def match_characters(prompt, characters):
-    """Return characters whose name appears as a whole word in the prompt.
+# Role nouns we extract from a character's description so a scene that refers to
+# them by ROLE ("a panicked monk", "the raider") still resolves to the right
+# sheet. Without this, role-only scenes match no character, fall back to the
+# sample-video style frames as the only human ref, and the model borrows
+# whoever was in the sample video instead of the cast.  (continuity-studio bug)
+_ROLE_WORDS = (
+    "monk", "raider", "viking", "warrior", "knight", "soldier", "king",
+    "queen", "prince", "princess", "priest", "nun", "wizard", "witch",
+    "hunter", "thief", "pirate", "captain", "sailor", "farmer", "merchant",
+    "guard", "child", "boy", "girl", "woman", "man", "elder", "robot",
+    "monster", "dragon", "beast", "ghost", "demon", "angel", "samurai",
+    "ninja", "cowboy", "detective", "doctor", "nurse", "teacher", "student",
+)
 
-    Also recognises explicit @Name mentions (which is what the cast chips
-    insert) and these are treated as an unambiguous tag.
+
+def _character_aliases(c):
+    """Role nouns that should resolve to this character, derived from its own
+    description/sheet_prompt — so 'the monk' maps to the monk character even
+    when its proper name isn't in the scene prompt."""
+    blob = " ".join(str(c.get(k) or "") for k in
+                     ("description", "sheet_prompt", "prompt")).lower()
+    return {w for w in _ROLE_WORDS if re.search(r"(?<!\w)" + w + r"s?(?!\w)", blob)}
+
+
+def match_characters(prompt, characters):
+    """Return characters referenced in the prompt — by @mention, by name, or by
+    a ROLE noun pulled from the character's own description.
+
+    Name/@mention are exact and unambiguous. Role matching only fires when the
+    role maps to exactly ONE character in the cast, so an ambiguous "the man"
+    (two male characters) never silently picks the wrong one.
     """
     low = (prompt or "").lower()
     matched = []
     seen = set()
+
+    # Build role -> [characters] index, dropping roles shared by >1 character
+    # (ambiguous, unsafe to auto-pick).
+    role_index = {}
+    for c in characters:
+        for a in _character_aliases(c):
+            role_index.setdefault(a, []).append(c)
+    unique_roles = {a: cs[0] for a, cs in role_index.items() if len(cs) == 1}
+
     for c in characters:
         name = (c.get("name") or "").strip()
         cid = c.get("id") or ""
@@ -31,9 +66,17 @@ def match_characters(prompt, characters):
         # Exact @mention match (case-insensitive).
         if re.search(r"@" + re.escape(name.lower()) + r"\b", low):
             matched.append(c); seen.add(cid); continue
-        # bare-word form
+        # bare-word name form
         if re.search(r"(?<!\w)" + re.escape(name.lower()) + r"(?!\w)", low):
             matched.append(c); seen.add(cid); continue
+
+    # Role-alias pass: only unambiguous (single-owner) roles.
+    for role, c in unique_roles.items():
+        cid = c.get("id") or ""
+        if cid in seen:
+            continue
+        if re.search(r"(?<!\w)" + role + r"s?(?!\w)", low):
+            matched.append(c); seen.add(cid)
     return matched
 
 
@@ -258,7 +301,13 @@ def build_full_prompt(master_prompt, shot_prompt, matched, has_previous,
             "composition driven by the prompt below — never re-stage what a STYLE "
             "REF shows. Copy the LOOK, invent the SHOT. Do not drift toward a "
             "generic or more realistic style. Any character-sheet image defines "
-            "character identity ONLY. If the reference look and your defaults "
+            "character identity ONLY. CRITICAL: the people/characters that appear "
+            "INSIDE the STYLE REF frames are NOT this story's cast — never copy, "
+            "trace or reuse their faces, bodies, outfits or identities. Only the "
+            "labelled CHARACTER sheets (if any) define who appears in this frame; "
+            "if no character sheet is attached, draw any required figure fresh "
+            "from the prompt text in the source art style, NOT by lifting a person "
+            "out of a STYLE REF. If the reference look and your defaults "
             "disagree, the source video frames win."
         )
 
