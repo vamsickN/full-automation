@@ -638,7 +638,8 @@ class ClaudeClient:
                         total_duration: float = 60.0, pacing_seconds: float = 1.0,
                         num_characters: int = 0, style_notes: str = "",
                         master_prompt: str = "", brief: str = "",
-                        dialogue: bool = False, dynamic: bool = False):
+                        dialogue: bool = False, dynamic: bool = False,
+                        voiceover_style: str = ""):
         """Title + description -> full VO script + paced scene list + packed
         per-character sheet prompts.
 
@@ -742,6 +743,17 @@ class ClaudeClient:
             "scroll-stopping opening — shocking question, wild claim, or visceral "
             "image. Short punchy VO (4-8 words). After the hook, settle into "
             f"normal ~{words_per_scene}-word VO lines per scene.\n"
+            + (
+                "- WAY OF SPEAKING (MANDATORY — this is how the source video "
+                "talks): write the ENTIRE narration — especially the opening "
+                "hook — in this exact voice. Match its tone, vocabulary, "
+                "sentence rhythm, person (1st/2nd/3rd), and hook strategy. Do "
+                "NOT default to a generic explainer voice. This narration style "
+                "is the source of truth for the words, the same way STYLE NOTES "
+                "are the source of truth for the visuals:\n"
+                f"    {voiceover_style.strip()}\n"
+                if (voiceover_style or "").strip() else ""
+            ) +
             "- STYLE FIDELITY: every scene 'prompt' and character 'sheet_prompt' "
             "MUST match the art style described in the STYLE NOTES / STYLE BIBLE "
             "below (rendering technique, palette, line work, level of detail). "
@@ -888,7 +900,7 @@ class ClaudeClient:
             "Return STRICT JSON ONLY (no prose, no markdown fences):\n"
             "{\n"
             '  "style_summary": str,   // 2-3 sentences on the visual look\n'
-            '  "speech_style": str,    // how the narration talks (tone/pacing/hooks)\n'
+            '  "speech_style": str,    // CONCRETE narration voice: person (1st/2nd/3rd), tone, characteristic vocabulary/phrases, sentence rhythm, AND the EXACT hook formula it opens with (quote or paraphrase its actual first lines and name the pattern). Be specific enough to imitate, not a vague summary.\n'
             '  "topic": str,           // what the source is about\n'
             '  "suggestions": [ {\n'
             '     "title": str,\n'
@@ -999,7 +1011,7 @@ class ClaudeClient:
             "{\n"
             '  "art_style": str,        // 2-3 sentences on the shared visual look\n'
             '  "pacing": str,           // how fast/slow it cuts and why it works\n'
-            '  "speech_style": str,     // how the narration talks (tone/hooks/cadence)\n'
+            '  "speech_style": str,     // CONCRETE narration voice: person (1st/2nd/3rd), tone, characteristic vocabulary/phrases, sentence rhythm, AND the EXACT hook formula the source opens with (quote or paraphrase its actual first lines and name the pattern, e.g. opens on a shocking 2nd-person claim like You will not survive this). Be specific enough to imitate, not a vague summary.\n'
             '  "storytelling": str,     // shared narrative structure & hook strategy\n'
             '  "sources_summary": str,  // 1-2 sentences on what these videos are about\n'
             '  "suggestions": [ {\n'

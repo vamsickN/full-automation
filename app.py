@@ -1408,21 +1408,32 @@ def _render_one(g_prompt, size, quality, continue_prev, style_lock,
     _style_cap = config.STYLE_FRAMES_WITH_CHARS if _has_chars else config.STYLE_FRAMES_NO_CHARS
     _style_cap = max(0, min(int(_style_cap), int(config.STYLE_REF_COUNT)))
 
+    # Load the capped style-frame images once.
+    _style_imgs = []
+    for sf in style_frames[:_style_cap]:
+        try:
+            _style_imgs.append(store.read_image(sf["url"]))
+        except Exception:
+            pass
+
     refs, ref_meta = [], []
-    # Character sheets FIRST when present — they define who appears, so they must
-    # outrank the source-video style frames in the contact grid.
+    # Ordering balances two needs:
+    #   - ART STYLE: the model reads style most strongly from the FIRST / dominant
+    #     contact-sheet cell, so put ONE style frame at the very front to anchor
+    #     the look in the prime position.
+    #   - IDENTITY: character sheets must outrank the REMAINING style frames so
+    #     the cast (not the source video's people) defines who appears — so the
+    #     character sheets go next, then any leftover style frames trail behind.
+    if _style_imgs:
+        refs.append(_style_imgs[0]); ref_meta.append({"type": "style"})
     for c in matched:
         try:
             refs.append(store.read_image(c["sheet_url"]))
             ref_meta.append({"type": "character", "name": c["name"]})
         except Exception:
             pass
-    for sf in style_frames[:_style_cap]:
-        try:
-            refs.append(store.read_image(sf["url"]))
-            ref_meta.append({"type": "style"})
-        except Exception:
-            pass
+    for img in _style_imgs[1:]:
+        refs.append(img); ref_meta.append({"type": "style"})
     # Smart continuity: feed the previous frame as an IMAGE ref ONLY when this
     # shot is a micro-cut of the SAME moment (shot_relation == "continue"). For a
     # real cut/new beat, the previous frame is kept OUT so the model is free to
@@ -1628,25 +1639,29 @@ def _render_one_for_queue(g_prompt, params, settings, project_id):
     micro_cut = (shot_relation == "continue") and bool(prev)
 
     refs, ref_meta = [], []
-    # Character bleed fix (see _render_one): style frames carry the SOURCE
-    # video's characters, so flooding the edit with them makes the model draw
-    # that video's person instead of our cast. Put CHARACTER sheets first
-    # (dominant grid weight) and hard-cap style frames when a sheet is present.
+    # Balanced ordering (see _render_one): ONE style frame leads to anchor the art
+    # style in the dominant cell, then character sheets (identity outranks the
+    # remaining style frames), then leftover style frames. Cap keeps style strong
+    # without letting the source video's people outvote the cast.
     _has_chars = bool(matched)
     _style_cap = config.STYLE_FRAMES_WITH_CHARS if _has_chars else config.STYLE_FRAMES_NO_CHARS
     _style_cap = max(0, min(int(_style_cap), int(config.STYLE_REF_COUNT)))
+    _style_imgs = []
+    for sf in style_frames[:_style_cap]:
+        try:
+            _style_imgs.append(store.read_image(sf["url"]))
+        except Exception:
+            pass
+    if _style_imgs:
+        refs.append(_style_imgs[0]); ref_meta.append({"type": "style"})
     for c in matched:
         try:
             refs.append(store.read_image(c["sheet_url"]))
             ref_meta.append({"type": "character", "name": c["name"]})
         except Exception:
             pass
-    for sf in style_frames[:_style_cap]:
-        try:
-            refs.append(store.read_image(sf["url"]))
-            ref_meta.append({"type": "style"})
-        except Exception:
-            pass
+    for img in _style_imgs[1:]:
+        refs.append(img); ref_meta.append({"type": "style"})
     if micro_cut:
         try:
             refs.append(store.read_image(prev["image_url"]))
@@ -7997,6 +8012,10 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
 
     # ── Script generation (attempt 1) ──────────────────────────────────────
     if not _reuse_script:
+        # Way-of-speaking learned from the reference video(s) — passed as a
+        # first-class narration mandate so the hook + VO actually sound like the
+        # source, instead of a generic explainer voice.
+        _vo_style = (st.get("yt_inspiration", {}) or {}).get("speech_style", "")
         try:
             script = _generate_script_validated(
                 claude,
@@ -8007,6 +8026,7 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
                 style_notes=style_notes,
                 master_prompt=st["master_prompt"],
                 dynamic=body.dynamic,
+                voiceover_style=_vo_style,
             )
         except Exception as e:
             raise HTTPException(500, f"Script generation failed: {e}")
@@ -8033,6 +8053,7 @@ def _autopilot_pipeline(body: AutopilotIn, request: Request):
                     style_notes=style_notes,
                     master_prompt=st["master_prompt"],
                     dynamic=body.dynamic,
+                    voiceover_style=_vo_style,
                 )
                 script2 = extract_json(raw2)
                 if len(script2.get("scenes") or []) > _pre_actual:
@@ -9013,10 +9034,10 @@ def api_audio_to_video(body: AudioToVideoIn, request: Request):
                 cur.get("master_prompt", ""), name, sheet_prompt,
                 style_notes=cur.get("style_notes", ""))
             _refs, _labels = [], []
-            for _sf in (cur.get("style_frames") or [])[:3]:
+            for _sf in (cur.get("style_frames") or [])[:config.STYLE_REF_COUNT]:
                 try:
                     _refs.append(store.read_image(_sf["url"]))
-                    _labels.append("STYLE REF — match this art style")
+                    _labels.append("STYLE REF — COPY ART STYLE ONLY; IGNORE ITS CHARACTERS/PEOPLE")
                 except Exception:
                     pass
             if _refs:
@@ -9487,10 +9508,10 @@ def _a2v_run_pipeline(run_id: str, body: A2VRenderIn, s: dict, img_cfg: dict, re
             prompt = pipeline.build_sheet_prompt(cur.get("master_prompt", ""), name, sheet_prompt,
                                                   style_notes=cur.get("style_notes", ""))
             _refs, _labels = [], []
-            for _sf in (cur.get("style_frames") or [])[:3]:
+            for _sf in (cur.get("style_frames") or [])[:config.STYLE_REF_COUNT]:
                 try:
                     _refs.append(store.read_image(_sf["url"]))
-                    _labels.append("STYLE REF — match this art style")
+                    _labels.append("STYLE REF — COPY ART STYLE ONLY; IGNORE ITS CHARACTERS/PEOPLE")
                 except Exception:
                     pass
             if _refs:

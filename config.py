@@ -213,15 +213,16 @@ SUPPORTED_QUALITIES = ["low", "medium", "high", "auto"]
 STYLE_REF_COUNT = int(_get("STYLE_REF_COUNT", "6"))
 
 # CHARACTER-BLEED GUARD. Style frames are whole frames from the SOURCE video and
-# therefore usually CONTAIN that video's own characters. If they outnumber the
-# attached character sheets in the edit, the model draws the source video's
-# person instead of our cast (the "wrong Viking" bug). So when a scene HAS a
-# matched character sheet, we feed only a few style frames (enough to convey art
-# style, too few to dominate identity); when it has NONE (pure scenery), we still
-# cap them so a stray person inside a style frame is less likely to become the
-# subject. Both are bounded by STYLE_REF_COUNT. Tune via .env.
-STYLE_FRAMES_WITH_CHARS = int(_get("STYLE_FRAMES_WITH_CHARS", "2"))
-STYLE_FRAMES_NO_CHARS = int(_get("STYLE_FRAMES_NO_CHARS", "3"))
+# therefore usually CONTAIN that video's own characters. Identity is protected by
+# (a) putting the CHARACTER sheets FIRST in the ref list so they lead the grid,
+# and (b) the strengthened STYLE-REF captions + prompt text that tell the model
+# to copy art style ONLY and ignore people shown in style frames. We deliberately
+# keep a HEALTHY number of style frames so the art-style read stays strong —
+# over-cutting them (to 2-3) starves the style copy and the look drifts off the
+# source. With a character sheet present we trim only modestly (it already
+# carries the style); with none we use the full STYLE_REF_COUNT. Tune via .env.
+STYLE_FRAMES_WITH_CHARS = int(_get("STYLE_FRAMES_WITH_CHARS", "4"))
+STYLE_FRAMES_NO_CHARS = int(_get("STYLE_FRAMES_NO_CHARS", "6"))
 
 # Hard ceiling on how many reference images go into a SINGLE image-edit call
 # (style frames + character sheets + previous frame, combined). Anchors the
