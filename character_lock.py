@@ -85,8 +85,9 @@ def resolve_scene_characters(scene_text, char_index, explicit_ids=None,
       2. token scan   -- otherwise scan the scene text against char_index using
          word-boundary matches (so 'max' doesn't fire inside 'maximum').
 
-    Order is preserved by first appearance so the ref order is stable across
-    scenes (stable order == stable identity).
+    Order is preserved by FIRST APPEARANCE in the scene text so the ref order
+    tracks how characters actually enter the scene (stable, scene-driven
+    identity ordering). For explicit_ids, the caller's tag order is preserved.
     """
     out, seen = [], set()
 
@@ -95,7 +96,7 @@ def resolve_scene_characters(scene_text, char_index, explicit_ids=None,
             seen.add(id(c))
             out.append(c)
 
-    # 1. explicit tags win
+    # 1. explicit tags win -- preserve the caller's tag order
     if explicit_ids:
         by_name = {}
         for c in (all_characters or []):
@@ -109,11 +110,18 @@ def resolve_scene_characters(scene_text, char_index, explicit_ids=None,
         if out:
             return out
 
-    # 2. token scan against the locked index
+    # 2. token scan against the locked index, ordered by FIRST APPEARANCE in
+    #    the scene text. For each token that matches on a word boundary, record
+    #    the index of its first occurrence, then emit characters in that order.
     text = _norm_name(scene_text)
+    hits = []  # (first_pos, character)
     for token, c in char_index.items():
-        if re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", text):
-            _add(c)
+        m = re.search(rf"(?<![a-z0-9]){re.escape(token)}(?![a-z0-9])", text)
+        if m:
+            hits.append((m.start(), c))
+    hits.sort(key=lambda h: h[0])
+    for _pos, c in hits:
+        _add(c)
     return out
 
 
