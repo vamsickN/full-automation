@@ -14,4 +14,6 @@ USER appuser
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/api/health', timeout=5)" || exit 1
 EXPOSE 8000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
+# Serve via ui_patch:app so the pro UI (fonts + animations + mobile) is injected.
+# Falls back to plain app:app if you prefer the bare UI.
+CMD ["uvicorn", "ui_patch:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
