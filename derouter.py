@@ -133,6 +133,10 @@ class ImageClient:
             )
         except requests.RequestException as e:
             return {"ok": False, "error": f"connection failed: {e}"}
+        if r.status_code == 404:
+            # Some routers don't implement /models
+            return {"ok": True, "models": [], "configured_model": self.model,
+                    "base_url": self.base_url, "warning": "Provider doesn't list models, assuming ok."}
         if r.status_code >= 400:
             return {
                 "ok": False,
@@ -393,9 +397,20 @@ class OpenRouterImageClient:
 
     def __init__(self, api_key=None, base_url=None, model=None, timeout=None):
         self.api_key = api_key or config.OPENROUTER_API_KEY
-        self.base_url = (base_url or config.OPENROUTER_BASE_URL).rstrip("/")
+        url_raw = (base_url or config.OPENROUTER_BASE_URL).rstrip("/")
+        # If the settings passed the OpenAI images endpoint (e.g. /images/generations
+        # or /images/edits), strip them so the chat completions path works.
+        for suffix in ("/images/generations", "/images/edits", "/images"):
+            if url_raw.endswith(suffix):
+                url_raw = url_raw[:-len(suffix)].rstrip("/")
+        self.base_url = url_raw
         m = model or config.OPENROUTER_MODEL
-        if m and m not in config.OPENROUTER_MODELS:
+        # Only enforce the known-model check when actually using OpenRouter's
+        # own endpoint. When this client is reused for 9Router chat-image
+        # models (ag/ prefix → Gemini Flash), the model id won't be in the
+        # OpenRouter list and that's expected — don't override it.
+        _is_openrouter_endpoint = ("openrouter.ai" in self.base_url)
+        if _is_openrouter_endpoint and m and m not in config.OPENROUTER_MODELS:
             _log(f"model {m!r} not in known list, falling back to {config.OPENROUTER_MODEL}")
             m = config.OPENROUTER_MODEL
         self.model = m
@@ -420,6 +435,10 @@ class OpenRouterImageClient:
             )
         except requests.RequestException as e:
             return {"ok": False, "error": f"connection failed: {e}"}
+        if r.status_code == 404:
+            # Some routers (AgentRouter/tunnels) don't implement /models
+            return {"ok": True, "models": [], "configured_model": self.model,
+                    "base_url": self.base_url, "warning": "Provider doesn't list models, assuming ok."}
         if r.status_code >= 400:
             return {"ok": False, "error": f"HTTP {r.status_code}: {r.text[:300]}"}
         return {"ok": True, "configured_model": self.model, "base_url": self.base_url}
@@ -588,7 +607,11 @@ class OpenRouterImageClient:
         return self._force_aspect(raw, size)
 
     def edit(self, prompt, images, size=None, quality=None, mask=None,
-             retry=True, index=0):
+             retry=True, index=0, multi_image_edit=None):
+        """Edit with reference images via chat completions + inline vision.
+        ``multi_image_edit`` is accepted for API compatibility with
+        ``ImageClient.edit()`` but has no effect — refs are always sent as
+        inline vision content parts in the chat message."""
         if not retry:
             return self._edit_once(prompt, images, size, quality)
         return image_queue.run_with_retry(
@@ -645,3 +668,175 @@ class OpenRouterImageClient:
                 f"{resp.text[:300]}"
             ) from e
         return self._force_aspect(raw, size)
+
+
+class PuterImageClient:
+    """Image generation and editing via Puter.js REST API.
+
+    Calls Puter's hosted AI drivers at ``https://api.puter.com/drivers/call``
+    using the user's Puter auth token. No JS runtime dependencies needed.
+    """
+
+    def __init__(self, api_key=None, base_url=None, model=None, timeout=None):
+        self.api_key = api_key or ""
+        self.base_url = "https://api.puter.com/drivers/call"
+        self.model = model or "gpt-image-2"
+        self.timeout = timeout or 300
+
+    def _require_key(self):
+        if not self.api_key:
+            raise RuntimeError(
+                "No Puter Auth Token set. Please paste your puter-auth-token "
+                "in the Settings panel under Puter Image Provider."
+            )
+
+    def ping(self):
+        """Cheap validation: trigger a testMode txt2img call."""
+        if not self.api_key:
+            return {"ok": False, "error": "no puter auth token set"}
+        try:
+            r = requests.post(
+                self.base_url,
+                json={
+                    "interface": "puter-image-generation",
+                    "driver": "ai-image",
+                    "test_mode": True,
+                    "method": "generate",
+                    "args": {
+                        "prompt": "ping",
+                        "model": self.model,
+                    },
+                    "auth_token": self.api_key,
+                },
+                timeout=15,
+            )
+            if r.status_code == 401:
+                return {"ok": False, "error": "Puter auth rejected (unauthorized)", "base_url": self.base_url}
+            if r.status_code >= 400:
+                return {"ok": False, "error": f"Puter API error [HTTP {r.status_code}]: {r.text[:200]}", "base_url": self.base_url}
+            return {"ok": True, "configured_model": self.model, "base_url": self.base_url}
+        except Exception as e:
+            return {"ok": False, "error": f"Connection failed: {e}", "base_url": self.base_url}
+
+    @staticmethod
+    def _parse_ratio(size):
+        """'1536x1024' -> {'w': 1536, 'h': 1024}"""
+        if not size or size == "auto":
+            return None
+        try:
+            w, h = size.split("x")
+            return {"w": int(w), "h": int(h)}
+        except Exception:
+            return None
+
+    def generate(self, prompt, size=None, quality=None, retry=True, index=0):
+        if not retry:
+            return self._generate_once(prompt, size, quality)
+        return image_queue.run_with_retry(
+            lambda: self._generate_once(prompt, size, quality),
+            index=index, model=self.model, label="puter-generate")
+
+    def _generate_once(self, prompt, size=None, quality=None):
+        self._require_key()
+        size = size or config.DEFAULT_SIZE
+        quality = quality or config.DEFAULT_QUALITY
+        ratio = self._parse_ratio(size)
+
+        args = {
+            "prompt": prompt,
+            "model": self.model,
+        }
+        if ratio:
+            args["ratio"] = ratio
+        if quality and quality != "auto":
+            args["quality"] = quality
+
+        _log(f"puter generate model={self.model} size={size} quality={quality} prompt_len={len(prompt)}")
+        t0 = time.time()
+        try:
+            r = requests.post(
+                self.base_url,
+                json={
+                    "interface": "puter-image-generation",
+                    "driver": "ai-image",
+                    "test_mode": False,
+                    "method": "generate",
+                    "args": args,
+                    "auth_token": self.api_key,
+                },
+                timeout=self.timeout,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(f"could not reach Puter at {self.base_url} — {e}")
+        dt = time.time() - t0
+        _log(f"puter generate -> HTTP {r.status_code} in {dt:.1f}s")
+
+        if r.status_code == 401:
+            raise RuntimeError("Puter API rejected the auth token — please check your key in Settings.")
+        if r.status_code >= 400:
+            raise RuntimeError(f"Puter image generation failed [HTTP {r.status_code}]: {r.text[:600]}")
+
+        # The endpoint returns raw binary image data (e.g. image/png or image/jpeg)
+        return _enforce_aspect(r.content, size)
+
+    def edit(self, prompt, images, size=None, quality=None, mask=None,
+             retry=True, index=0, multi_image_edit=None):
+        if not retry:
+            return self._edit_once(prompt, images, size, quality)
+        return image_queue.run_with_retry(
+            lambda: self._edit_once(prompt, images, size, quality),
+            index=index, model=self.model, label="puter-edit")
+
+    def _edit_once(self, prompt, images, size=None, quality=None):
+        """Puter edit uses 'input_images' parameter (array of base64 data-URIs)."""
+        self._require_key()
+        if not images:
+            return self._generate_once(prompt, size, quality)
+        size = size or config.DEFAULT_SIZE
+        quality = quality or config.DEFAULT_QUALITY
+        ratio = self._parse_ratio(size)
+
+        input_images = []
+        for img_bytes in images[:max(1, int(getattr(config, "MAX_REF_IMAGES", 10)))]:
+            # Compress and encode references
+            compressed, mime = OpenRouterImageClient._compress_ref(img_bytes)
+            b64 = base64.b64encode(compressed).decode()
+            input_images.append(f"data:{mime};base64,{b64}")
+
+        args = {
+            "prompt": prompt,
+            "model": self.model,
+            "input_images": input_images,
+        }
+        if ratio:
+            args["ratio"] = ratio
+        if quality and quality != "auto":
+            args["quality"] = quality
+
+        _log(f"puter edit model={self.model} refs={len(images)} prompt_len={len(prompt)}")
+        t0 = time.time()
+        try:
+            r = requests.post(
+                self.base_url,
+                json={
+                    "interface": "puter-image-generation",
+                    "driver": "ai-image",
+                    "test_mode": False,
+                    "method": "generate",
+                    "args": args,
+                    "auth_token": self.api_key,
+                },
+                timeout=self.timeout,
+            )
+        except requests.RequestException as e:
+            raise RuntimeError(f"could not reach Puter at {self.base_url} — {e}")
+        dt = time.time() - t0
+        _log(f"puter edit -> HTTP {r.status_code} in {dt:.1f}s")
+
+        if r.status_code == 401:
+            raise RuntimeError("Puter API rejected the auth token — please check your key in Settings.")
+        if r.status_code >= 400:
+            raise RuntimeError(f"Puter image edit failed [HTTP {r.status_code}]: {r.text[:600]}")
+
+        return _enforce_aspect(r.content, size)
+

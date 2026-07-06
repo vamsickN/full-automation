@@ -50,7 +50,7 @@ import config
 import pipeline
 import store
 import editor
-from derouter import ImageClient
+from derouter import ImageClient, OpenRouterImageClient, PuterImageClient
 from claude_client import ClaudeClient, extract_json
 
 store.init()
@@ -268,6 +268,8 @@ async def auth_middleware(request: Request, call_next):
         "gemini_api_key": user_data.get("gemini_api_key", getattr(config, "GEMINI_API_KEY", "")),
         "gemini_model": user_data.get("gemini_model", getattr(config, "GEMINI_MODEL", "gemini-2.5-flash")),
         "gemini_base_url": user_data.get("gemini_base_url", getattr(config, "GEMINI_BASE_URL", "")),
+        "puter_api_key": user_data.get("puter_api_key", ""),
+        "puter_model": user_data.get("puter_model", "gpt-image-2"),
     }
     response = await call_next(request)
     # Security headers
@@ -396,6 +398,8 @@ def _has_image_key(request: Request) -> bool:
     """True if the active image_provider is configured. Pollinations + local
     have no key — always 'configured' (they're free)."""
     s = request.state.settings
+    if s.get("image_provider") == "puter":
+        return bool(s.get("puter_api_key"))
     if s.get("image_provider") == "9router":
         return bool(s.get("ninerouter_api_key"))
     if s.get("image_provider") == "pollinations":
@@ -412,6 +416,7 @@ def _resolve_image(s: dict):
 
     Providers:
       - 'derouter' (default) — the configured image key / OpenAI-compatible proxy
+      - 'puter'              — Puter REST API driver call.
       - '9router'            — route image gen through a local 9Router instance's
                                OpenAI-compatible endpoint, reusing the shared
                                9Router API key.
@@ -424,6 +429,10 @@ def _resolve_image(s: dict):
                                (high quality) / flux-schnell (best quality,
                                needs ~12 GB VRAM).
     """
+    if s.get("image_provider") == "puter":
+        return (s.get("puter_api_key", ""),
+                "https://api.puter.com/drivers/call",
+                s.get("puter_model", "gpt-image-2"))
     if s.get("image_provider") == "9router":
         return (s.get("ninerouter_api_key", ""),
                 (s.get("ninerouter_image_base_url") or config.NINEROUTER_IMAGE_BASE_URL),
@@ -445,11 +454,37 @@ def _resolve_image(s: dict):
             s.get("model", config.MODEL))
 
 
-def get_image_client(request: Request):
-    """Return the right ImageClient for the active image_provider.
-    Pollinations + local get their own client classes (different APIs);
-    derouter/9router/direct share ``derouter.ImageClient``."""
-    s = request.state.settings
+def _is_chat_image_model(model: str) -> bool:
+    """True if this model uses chat completions for image generation instead of
+    the OpenAI /images/edits + /images/generations endpoints.
+
+    Models behind 9Router's ag/ prefix (AgentRouter → Gemini) generate images
+    via chat completions with ``modalities: ["image", "text"]`` — the same
+    mechanism as OpenRouter's Riverflow. Sending them to /images/edits returns
+    500 and the fallback to /images/generations drops ALL reference images
+    (style frames, character sheets), which is why "style copy is not working"
+    and "not using reference image and character reference" when ag/ models are
+    selected as the 9Router image model.
+
+    This helper lets ``get_image_client`` pick ``OpenRouterImageClient`` (chat
+    completions + inline vision refs) for these models instead of ``ImageClient``
+    (OpenAI images API), so references actually get sent and style/character
+    continuity works.
+    """
+    if not model:
+        return False
+    low = model.lower().strip()
+    # ag/ = AgentRouter (Gemini Flash image gen via chat completions)
+    if low.startswith("ag/"):
+        return True
+    # Explicit Gemini image-generation models (may be typed without prefix)
+    if "gemini" in low and ("image" in low or "flash" in low):
+        return True
+    return False
+
+
+def _client_from_settings(s: dict):
+    """Factory to build the right ImageClient instance based on settings dict."""
     api_key, base_url, model = _resolve_image(s)
     if s.get("image_provider") == "pollinations":
         from pollinations import PollinationsImageClient
@@ -467,7 +502,35 @@ def get_image_client(request: Request):
             steps=s.get("diffusers_steps"),
             guidance=s.get("diffusers_guidance"),
         )
+    if s.get("image_provider") == "puter":
+        return PuterImageClient(api_key=api_key, base_url=base_url, model=model)
+    # 9Router with a chat-based image model (ag/ = Gemini Flash image-gen):
+    # these models work via chat/completions, NOT /images/edits. Use the
+    # OpenRouterImageClient which sends refs as inline vision + extracts the
+    # generated image from the chat response.
+    if s.get("image_provider") == "9router" and _is_chat_image_model(model):
+        print(f"[image] 9router chat-image model detected: {model} — "
+              f"using OpenRouterImageClient (chat completions with refs)",
+              flush=True)
+        return OpenRouterImageClient(
+            api_key=api_key, base_url=base_url, model=model,
+        )
     return ImageClient(api_key=api_key, base_url=base_url, model=model)
+
+
+def get_image_client(request: Request):
+    """Return the right ImageClient for the active image_provider.
+    Pollinations + local get their own client classes (different APIs);
+    derouter/9router/direct share ``derouter.ImageClient``.
+
+    SPECIAL CASE: 9Router models that generate images via CHAT COMPLETIONS
+    (ag/ prefix = Gemini Flash image-gen) get routed through
+    ``OpenRouterImageClient`` instead, which sends reference images as inline
+    vision content in chat/completions. Without this, the /images/edits
+    endpoint 500s on 9Router for chat-based models and falls back to
+    prompt-only generation — losing ALL style frames, character sheets and
+    continuity references."""
+    return _client_from_settings(request.state.settings)
 
 def get_claude_client(request: Request = None) -> ClaudeClient:
     if request:
@@ -663,6 +726,8 @@ def api_state(request: Request):
             "agentrouter_model": s.get("agentrouter_model", getattr(config, "AGENTROUTER_MODEL", "claude-sonnet-4-6")),
             "agentrouter_models": getattr(config, "AGENTROUTER_MODELS", []),
             "has_agentrouter_key": bool(s.get("agentrouter_api_key")),
+            "puter_model": s.get("puter_model", "gpt-image-2"),
+            "has_puter_key": bool(s.get("puter_api_key")),
         },
     }
 
@@ -769,6 +834,8 @@ class SettingsIn(BaseModel):
     gemini_api_key: Optional[str] = None
     gemini_model: Optional[str] = None
     gemini_base_url: Optional[str] = None
+    puter_api_key: Optional[str] = None
+    puter_model: Optional[str] = None
 
 
 @app.post("/api/settings")
@@ -819,19 +886,23 @@ def api_settings(s: SettingsIn, request: Request):
     if s.pollinations_private is not None: user_settings["pollinations_private"] = bool(s.pollinations_private)
     if s.pollinations_nologo is not None: user_settings["pollinations_nologo"] = bool(s.pollinations_nologo)
     if s.pollinations_base_url: user_settings["pollinations_base_url"] = s.pollinations_base_url.strip().rstrip("/")
-    if s.diffusers_model: user_settings["diffusers_model"] = s.diffusers_model.strip()
-    if s.diffusers_steps is not None: user_settings["diffusers_steps"] = int(s.diffusers_steps)
-    if s.diffusers_guidance is not None: user_settings["diffusers_guidance"] = float(s.diffusers_guidance)
+    if s.gemini_api_key is not None: user_settings["gemini_api_key"] = s.gemini_api_key.strip()
+    if s.gemini_model: user_settings["gemini_model"] = s.gemini_model.strip()
+    if s.gemini_base_url: user_settings["gemini_base_url"] = s.gemini_base_url.strip().rstrip("/")
+    if s.puter_api_key is not None: user_settings["puter_api_key"] = s.puter_api_key.strip()
+    if s.puter_model: user_settings["puter_model"] = s.puter_model.strip()
 
     vault[email] = user_settings
     save_vault(vault)
 
+    # Return key statuses so the UI can update instantly
     return {
         "ok": True,
-        "has_api_key": bool(user_settings.get("api_key")),
-        "has_image_key": (
+        "has_api_key": (
             True
             if user_settings.get("image_provider") in ("pollinations", "local")
+            else bool(user_settings.get("puter_api_key"))
+            if user_settings.get("image_provider") == "puter"
             else bool(user_settings.get("ninerouter_api_key"))
             if user_settings.get("image_provider") == "9router"
             else bool(user_settings.get("api_key"))
@@ -857,6 +928,7 @@ def api_settings(s: SettingsIn, request: Request):
         "has_ninerouter_key": bool(user_settings.get("ninerouter_api_key")),
         "has_agentrouter_key": bool(user_settings.get("agentrouter_api_key")),
         "has_gemini_key": bool(user_settings.get("gemini_api_key")),
+        "has_puter_key": bool(user_settings.get("puter_api_key")),
         "image_provider": user_settings.get("image_provider", "derouter"),
         "claude_provider": user_settings.get("claude_provider", "derouter"),
     }
@@ -876,8 +948,10 @@ def api_9router_models(body: NineRouterModelsIn, request: Request):
     key = (body.api_key or s.get("ninerouter_api_key") or "").strip()
     base = (body.base_url or s.get("ninerouter_base_url")
             or config.NINEROUTER_BASE_URL).strip().rstrip("/")
-    if base.endswith("/v1"):           # image section passes the /v1 endpoint
-        base = base[:-3].rstrip("/")
+    # Strip any image endpoints or /v1 suffixes to get the clean root origin
+    for suffix in ("/images/generations", "/images/edits", "/images", "/v1"):
+        if base.endswith(suffix):
+            base = base[:-len(suffix)].rstrip("/")
     if not key:
         raise HTTPException(400, "no 9Router API key — paste one first")
     try:
@@ -1623,9 +1697,7 @@ def _render_one_for_queue(g_prompt, params, settings, project_id):
     continue_prev = params.get("continue_prev", True)
     style_lock = params.get("style_lock", True)
     multi_image_edit = settings.get("multi_image_edit", config.MULTI_IMAGE_EDIT)
-    client = ImageClient(api_key=settings.get("api_key"),
-                         base_url=settings.get("base_url"),
-                         model=settings.get("model"))
+    client = _client_from_settings(settings)
 
     st = store.load_state_for(project_id)
     matched = pipeline.match_characters(g_prompt, st["characters"])
@@ -2489,6 +2561,27 @@ def _normalize_suggestions(sugs):
             n["virality_score"] = score
         else:
             n.pop("virality_score", None)
+        # Reconcile the cast count with the actual characters array. The model
+        # routinely fills one but not the other, which is what made a card read
+        # "0 cast" while the build (auto-cast) invented several. Keep the two in
+        # sync: an enumerated cast is the source of truth for the count; a stated
+        # count with no array is preserved; neither -> None ("auto"), never a
+        # misleading 0, because the builder auto-casts when the pick has no cast.
+        chars = n.get("characters")
+        if not isinstance(chars, list):
+            chars = []
+            n["characters"] = chars
+        nc = n.get("num_characters")
+        try:
+            nc = int(nc)
+        except (TypeError, ValueError):
+            nc = None
+        if chars:
+            n["num_characters"] = len(chars)
+        elif nc is not None:
+            n["num_characters"] = max(0, nc)
+        else:
+            n["num_characters"] = None
         out.append(n)
     return out
 
@@ -9466,8 +9559,8 @@ def _a2v_run_pipeline(run_id: str, body: A2VRenderIn, s: dict, img_cfg: dict, re
     ``request`` is a mock object with .state.settings for functions that need it."""
     # s is already the settings dict (snapshotted before thread start)
     style_notes = (body.style_notes or "").strip()
-    # Use the snapshotted image config instead of request-dependent get_image_client
-    _img_client = ImageClient(api_key=img_cfg["api_key"], base_url=img_cfg["base_url"], model=img_cfg["model"])
+    # Use the snapshotted settings to build the image client.
+    _img_client = _client_from_settings(s)
     scenes = list(body.scenes or [])
     n = len(scenes)
     if n == 0:

@@ -2511,6 +2511,7 @@ https://youtube.com/playlist?list=…" class="inp" style="font-family:var(--mono
           <button class="prov-btn" id="imgProvPollinations" onclick="switchImageProvider('pollinations')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--teal,#3fdc8c)">🆓 Pollinations</button>
           <button class="prov-btn" id="imgProvLocal" onclick="switchImageProvider('local')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--amber,#f0ac6b)">💻 Local (diffusers)</button>
           <button class="prov-btn" id="imgProvFlow" onclick="switchImageProvider('flow')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--claude-soft,#c08cff)">🎬 Flow (extension)</button>
+          <button class="prov-btn" id="imgProvPuter" onclick="switchImageProvider('puter')" style="font-size:11px; padding:4px 12px; border:1px solid var(--line); border-radius:6px; cursor:pointer; background:none; color:var(--teal,#3fdc8c)">☁️ Puter</button>
         </div>
 
         <!-- derouter / OpenAI image section -->
@@ -2544,6 +2545,30 @@ https://youtube.com/playlist?list=…" class="inp" style="font-family:var(--mono
         </details>
         </div><!-- /imgDerouterSection -->
 
+        <!-- Puter image section -->
+        <div id="imgPuterSection" style="display:none">
+          <div id="imgPuterStatus" class="pill" style="margin-top:8px; width:max-content"><span class="dot"></span><span>not connected</span></div>
+          <p class="sub" style="font-size:11.5px; color:var(--muted); margin:6px 0 8px">
+            Uses <a href="https://puter.com" target="_blank" rel="noopener" style="color:var(--teal)">Puter's</a> hosted AI image generation. Puter gives a generous credit quota every day to all accounts.
+          </p>
+          <div class="fld"><label class="label">Puter auth token</label><input type="password" id="setPuterKey" placeholder="puter-auth-token..." onkeydown="if(event.key==='Enter')connectPuterImage()" /></div>
+          <div class="fld"><label class="label">Image model</label>
+            <select id="setPuterModel" class="select" style="width:100%">
+              <option value="gpt-image-2">gpt-image-2 (recommended)</option>
+              <option value="gpt-image-1.5">gpt-image-1.5</option>
+              <option value="gpt-image-1">gpt-image-1</option>
+              <option value="gpt-image-1-mini">gpt-image-1-mini</option>
+              <option value="gemini-2.5-flash-image-preview">gemini-2.5-flash-image-preview (Gemini)</option>
+              <option value="grok-imagine-image">grok-imagine-image (xAI)</option>
+            </select>
+            <p class="hint" style="margin-top:6px">Log in to <a href="https://puter.com" target="_blank" style="color:var(--amber-soft)">Puter.com</a>, open the DevTools console (F12), type <code>localStorage.getItem('puter-auth-token')</code> (or <code>puter.authToken</code>), and copy the value here.</p>
+          </div>
+          <div class="fld" style="display:flex; gap:10px; flex-wrap:wrap">
+            <button class="btn sm" onclick="connectPuterImage()">🎨 Connect Puter</button>
+            <button class="btn outline sm" id="disconnectPuterImgBtn" onclick="disconnectPuterImage()" style="display:none">Disconnect</button>
+          </div>
+        </div><!-- /imgPuterSection -->
+
         <!-- 9Router image section -->
         <div id="img9routerSection" style="display:none">
           <div id="img9routerStatus" class="pill" style="margin-top:8px; width:max-content"><span class="dot"></span><span>not connected</span></div>
@@ -2564,8 +2589,10 @@ https://youtube.com/playlist?list=…" class="inp" style="font-family:var(--mono
               <option value="gpt-image-1"></option>
               <option value="openai/gpt-image-1"></option>
               <option value="openai/dall-e-3"></option>
+              <option value="ag/gemini-2.0-flash-image-generation">ag/ Gemini Flash (chat-based, refs supported)</option>
+              <option value="ag/gemini-2.5-flash-preview-image-generation">ag/ Gemini 2.5 Flash (chat-based, refs supported)</option>
             </datalist>
-            <p class="hint" id="set9rImgModelHint" style="margin-top:6px">Type or pick the model id that your 9Router routes to an image-capable provider.</p>
+            <p class="hint" id="set9rImgModelHint" style="margin-top:6px">Type or pick the model id that your 9Router routes to an image-capable provider. <strong style="color:var(--teal)">ag/ models</strong> (Gemini Flash) use chat completions — style refs &amp; character sheets are sent as inline images automatically.</p>
           </div>
           <div class="fld" style="display:flex; gap:10px; flex-wrap:wrap">
             <button class="btn sm" onclick="connect9routerImage()">🎨 Connect 9Router images</button>
@@ -3925,6 +3952,7 @@ function hasImageKey(){
   if(!CFG) return false;
   if(CFG.image_provider==="pollinations") return true;   // no key required
   if(CFG.image_provider==="local") return true;          // local model, no key required
+  if(CFG.image_provider==="puter") return !!CFG.has_puter_key;
   if(CFG.image_provider==="9router") return !!CFG.has_ninerouter_key;
   return !!CFG.has_api_key;
 }
@@ -4016,13 +4044,13 @@ async function switchImageProvider(p){
   }catch(e){ toast(e.message,"err"); }
   renderImageProviderUI();
   refreshProviderUI();
-  const labels={derouter:"derouter / OpenAI","9router":"9Router (local)","pollinations":"Pollinations (free, no key)","local":"Local diffusers (free, runs on this machine)",flow:"Google Flow (free, via Chrome extension)"};
+  const labels={derouter:"derouter / OpenAI","9router":"9Router (local)",puter:"Puter (free/credit)","pollinations":"Pollinations (free, no key)","local":"Local diffusers (free, runs on this machine)",flow:"Google Flow (free, via Chrome extension)"};
   toast("Image provider → "+(labels[p]||p),"ok");
 }
 function renderImageProviderUI(){
   const p=CFG.image_provider||"derouter";
-  const btnMap={derouter:"imgProvDerouter","9router":"imgProv9router",pollinations:"imgProvPollinations",local:"imgProvLocal",flow:"imgProvFlow"};
-  const accent={derouter:"var(--amber-soft)",pollinations:"var(--teal,#3fdc8c)",local:"var(--amber,#f0ac6b)",flow:"var(--claude-soft,#c08cff)"};
+  const btnMap={derouter:"imgProvDerouter","9router":"imgProv9router",puter:"imgProvPuter",pollinations:"imgProvPollinations",local:"imgProvLocal",flow:"imgProvFlow"};
+  const accent={derouter:"var(--amber-soft)",puter:"var(--teal,#3fdc8c)",pollinations:"var(--teal,#3fdc8c)",local:"var(--amber,#f0ac6b)",flow:"var(--claude-soft,#c08cff)"};
   Object.keys(btnMap).forEach(k=>{
     const b=$("#"+btnMap[k]); if(!b) return;
     const on=p===k;
@@ -4031,12 +4059,23 @@ function renderImageProviderUI(){
     b.style.color=on?col:(k==="derouter"?"var(--ink)":col);
     b.style.boxShadow=on?("inset 0 -2px 0 "+col):"none";
   });
-  const ds=$("#imgDerouterSection"), ns=$("#img9routerSection"), ps=$("#imgPollinationsSection"), ls=$("#imgLocalSection"), fs=$("#imgFlowSection");
+  const ds=$("#imgDerouterSection"), ns=$("#img9routerSection"), ps=$("#imgPollinationsSection"), ls=$("#imgLocalSection"), fs=$("#imgFlowSection"), pts=$("#imgPuterSection");
   if(ds) ds.style.display=p==="derouter"?"block":"none";
   if(ns) ns.style.display=p==="9router"?"block":"none";
   if(ps) ps.style.display=p==="pollinations"?"block":"none";
   if(ls) ls.style.display=p==="local"?"block":"none";
   if(fs) fs.style.display=p==="flow"?"block":"none";
+  if(pts) pts.style.display=p==="puter"?"block":"none";
+  if(p==="puter"){
+    if($("#setPuterModel") && CFG.puter_model) $("#setPuterModel").value=CFG.puter_model||"gpt-image-2";
+    if(CFG.has_puter_key){ const db=$("#disconnectPuterImgBtn"); if(db) db.style.display="inline-flex"; }
+    const el=$("#imgPuterStatus");
+    if(el){
+      el.innerHTML = CFG.has_puter_key
+        ? `<span class="dot ok"></span><span>connected · ${CFG.puter_model||'ready'}</span>`
+        : `<span class="dot"></span><span>not connected</span>`;
+    }
+  }
   if(p==="9router"){
     if($("#set9rImgBase") && !$("#set9rImgBase").value) $("#set9rImgBase").value=CFG.ninerouter_image_base_url||"http://localhost:20128/v1";
     if($("#set9rImgModel") && !$("#set9rImgModel").value) $("#set9rImgModel").value=CFG.ninerouter_image_model||"gpt-image-2";
@@ -4131,6 +4170,44 @@ async function connectPollinationsImage(){
     renderImageProviderUI();
     refreshProviderUI();
     toast("Pollinations ready — free image gen ✓","ok"); confettiBurst();
+  }catch(e){ toast(e.message,"err"); }
+}
+async function connectPuterImage(){
+  const key=$("#setPuterKey").value.trim();
+  if(!key && !CFG.has_puter_key){ toast("Paste your Puter Auth Token first","err"); $("#setPuterKey").focus(); return; }
+  const el=$("#imgPuterStatus");
+  if(el) el.innerHTML=`<span class="dot" style="background:var(--amber)"></span><span>connecting…</span>`;
+  try{
+    const body={
+      image_provider: "puter",
+      puter_model: ($("#setPuterModel").value.trim() || "gpt-image-2")
+    };
+    if(key) body.puter_api_key=key;
+    const d=await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+    CFG.image_provider=d.image_provider||"puter";
+    CFG.has_puter_key=d.has_puter_key;
+    CFG.puter_model=body.puter_model;
+    const h=await api("/api/health"); const im=h.image||{};
+    refreshProviderUI();
+    if(im.ok){
+      if(el) el.innerHTML=`<span class="dot ok"></span><span>connected · ${im.configured_model||CFG.puter_model}</span>`;
+      toast("Puter connected ✓","ok"); confettiBurst();
+      const db=$("#disconnectPuterImgBtn"); if(db) db.style.display="inline-flex";
+    } else {
+      if(el) el.innerHTML=`<span class="dot" style="background:var(--red)"></span><span>connected but verification failed: ${_esc(im.error||"unknown")}</span>`;
+      toast("Puter connection verification failed","err");
+    }
+  }catch(e){ if(el) el.innerHTML=`<span class="dot" style="background:var(--red)"></span><span>${_esc(e.message)}</span>`; toast(e.message,"err"); }
+  finally{ $("#setPuterKey").value=""; }
+}
+async function disconnectPuterImage(){
+  try{
+    const d=await api("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({image_provider:"derouter"})});
+    CFG.image_provider="derouter";
+    renderImageProviderUI(); refreshProviderUI();
+    const el=$("#imgPuterStatus"); if(el) el.innerHTML=`<span class="dot"></span><span>not connected</span>`;
+    const db=$("#disconnectPuterImgBtn"); if(db) db.style.display="none";
+    toast("Image provider → derouter / OpenAI","ok");
   }catch(e){ toast(e.message,"err"); }
 }
 async function connect9routerImage(){
@@ -5088,7 +5165,7 @@ function renderSuggestions(){
       <div class="sg-title">${_esc(s.title||"Untitled idea")}</div>
       <div class="sg-log">${_esc(s.logline||"")}</div>
       <div class="sg-chips">
-        <span class="sg-chip">👤 ${s.num_characters||0} chars</span>
+        <span class="sg-chip">👤 ${_castLabel(s)}</span>
         <span class="sg-chip">⏱ ${s.pacing_seconds||1}s/img</span>
         <span class="sg-chip">🎬 ${s.scene_count||Math.round((s.total_duration||30)/(s.pacing_seconds||1))} scenes</span>
         <span class="sg-chip">⌛ ${s.total_duration||30}s</span>
@@ -5224,7 +5301,7 @@ function renderYTASuggestions(){
       ${s.hook?`<div class="sg-hook">⚡ <strong>Hook:</strong> ${_esc(s.hook)}</div>`:""}
       ${_viralMeter(s.virality_score, s.virality_reason)}
       <div class="sg-chips">
-        <span class="sg-chip">👤 ${s.num_characters||0} chars</span>
+        <span class="sg-chip">👤 ${_castLabel(s)}</span>
         <span class="sg-chip">⏱ ${s.pacing_seconds||1}s/img</span>
         <span class="sg-chip">🎬 ${s.scene_count||Math.round((s.total_duration||30)/(s.pacing_seconds||1))} scenes</span>
         <span class="sg-chip">⌛ ${s.total_duration||30}s</span>
@@ -6715,6 +6792,15 @@ function _viralBadge(score){
   const col = s>=80?"var(--teal)" : s>=60?"var(--amber)" : s>=40?"var(--violet)" : "var(--muted)";
   return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:${col};border:1px solid ${col};border-radius:999px;padding:2px 9px">🔥 ${s} virality</span>`;
 }
+// Cast count for a suggestion/topic. The backend sends num_characters=null when
+// a pick enumerates no cast — the builder then auto-casts — so show "auto cast"
+// rather than a misleading "0" that disagrees with what the build produces.
+function _castLabel(s){
+  const n = s && s.num_characters;
+  if(n===null || n===undefined) return "auto cast";
+  const k = parseInt(n); if(isNaN(k)) return "auto cast";
+  return k===1 ? "1 cast" : (k+" cast");
+}
 function renderTopics(){
   const wrap=$("#apTopics"); if(!wrap) return;
   if(!AP_TOPICS.length){ wrap.style.display="none"; return; }
@@ -6722,7 +6808,7 @@ function renderTopics(){
   let html=`<div style="font-size:12px;color:var(--muted);margin-bottom:8px">Pick a topic to produce — fresh ideas in this channel's style, ranked by predicted virality (not a copy of the source):</div><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px">`;
   AP_TOPICS.forEach((t,i)=>{
     html+=`<div class="build-card" style="display:flex;flex-direction:column;gap:6px">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${_viralBadge(t.virality_score)}<span style="font-size:11px;color:var(--muted)">~${Math.round(t.total_duration||0)}s · ${t.num_characters||0} cast</span></div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${_viralBadge(t.virality_score)}<span style="font-size:11px;color:var(--muted)">~${Math.round(t.total_duration||0)}s · ${_castLabel(t)}</span></div>
       <strong style="font-size:14px;line-height:1.3">${_esc(t.title||("Topic "+(i+1)))}</strong>
       <div style="font-size:12px;color:var(--ink)">${_esc(t.logline||"")}</div>
       ${t.hook?`<div style="font-size:11px;color:var(--teal)">Hook: ${_esc(t.hook)}</div>`:""}

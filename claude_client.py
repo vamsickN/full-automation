@@ -315,24 +315,37 @@ class ClaudeClient:
                 # requests. Handle both: plain JSON and SSE data: lines.
                 raw = r.text.strip()
                 if raw.startswith("data:"):
-                    # SSE streaming response — parse the LAST complete chunk
-                    # (which contains the final content).
+                    # SSE streaming response. Some routers stream deltas.
                     import re as _re
                     chunks = _re.findall(r"^data: (\{.*\})$", raw, _re.MULTILINE)
                     if chunks:
-                        data = json.loads(chunks[-1])
+                        accum_text = ""
+                        accum_reasoning = ""
+                        for c_str in chunks:
+                            try:
+                                c_data = json.loads(c_str)
+                                choice = (c_data.get("choices") or [{}])[0]
+                                delta = choice.get("delta") or choice.get("message") or {}
+                                accum_text += (delta.get("content") or "")
+                                accum_reasoning += (delta.get("reasoning_content") or "")
+                            except Exception:
+                                pass
+                        text = accum_text.strip()
+                        if not text:
+                            text = accum_reasoning.strip()
                     else:
                         raise RuntimeError(
                             f"chat API returned unparseable SSE (model={model}): "
                             f"{raw[:200]}")
                 else:
                     data = r.json()
-                msg = (data.get("choices") or [{}])[0].get("message") or {}
-                text = (msg.get("content") or "").strip()
-                # "Thinking" models (e.g. mimo-v2.5-pro) put the actual
-                # response in reasoning_content when content is empty.
-                if not text:
-                    text = (msg.get("reasoning_content") or "").strip()
+                    msg = (data.get("choices") or [{}])[0].get("message") or {}
+                    text = (msg.get("content") or "").strip()
+                    # "Thinking" models (e.g. mimo-v2.5-pro) put the actual
+                    # response in reasoning_content when content is empty.
+                    if not text:
+                        text = (msg.get("reasoning_content") or "").strip()
+                        
                 if not text:
                     raise RuntimeError(
                         f"chat API returned no text (model={model})")

@@ -43,14 +43,14 @@ ANTHROPIC_DIRECT_BASE_URL = "https://api.anthropic.com"
 # planning). Image generation still goes through the image provider (derouter /
 # OpenRouter) — 9Router routes chat/code models, not gpt-image.
 NINEROUTER_API_KEY = _get("NINEROUTER_API_KEY", "")
-NINEROUTER_BASE_URL = _get("NINEROUTER_BASE_URL", "http://localhost:20128")
+NINEROUTER_BASE_URL = _get("NINEROUTER_BASE_URL", "http://127.0.0.1:20128")
 NINEROUTER_MODEL = _get("NINEROUTER_MODEL", "cc/claude-sonnet-4-6")
 # Image generation through 9Router uses its OpenAI-compatible endpoint (note the
 # trailing /v1 — the images API lives under it, unlike the Anthropic base above).
 # NOTE: 9Router is built for chat/code LLMs; whether it proxies the OpenAI images
 # endpoint depends on the provider/account you connect in its dashboard. If image
 # gen returns an error, keep image generation on the derouter provider.
-NINEROUTER_IMAGE_BASE_URL = _get("NINEROUTER_IMAGE_BASE_URL", "http://localhost:20128/v1")
+NINEROUTER_IMAGE_BASE_URL = _get("NINEROUTER_IMAGE_BASE_URL", "http://127.0.0.1:20128/v1")
 NINEROUTER_IMAGE_MODEL = _get("NINEROUTER_IMAGE_MODEL", "gpt-image-2")
 # When the local-router Claude route keeps stalling/502ing, the SAME call is
 # rerouted to this model on the router's OpenAI endpoint. Default is empty
