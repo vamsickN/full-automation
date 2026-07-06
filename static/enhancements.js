@@ -1,7 +1,3 @@
-/* ============================================================
-   AGENT 2: UI/DESIGN — Interactive Enhancements
-   Inject before </body>: <script src="/static/enhancements.js"></script>
-   ============================================================ */
 ;(function(){
   'use strict';
 
@@ -25,7 +21,6 @@
     const r = btn.getBoundingClientRect();
     const sz = Math.max(r.width, r.height) * 2;
     const rip = document.createElement('span');
-    rip.className = 'ripple';
     rip.style.cssText = `
       position:absolute; border-radius:50%; pointer-events:none;
       width:${sz}px; height:${sz}px;
@@ -40,7 +35,7 @@
     setTimeout(() => rip.remove(), 600);
   });
 
-  /* === SCROLL REVEAL (IntersectionObserver) === */
+  /* === SCROLL REVEAL === */
   const revealObs = new IntersectionObserver(entries => {
     entries.forEach(ent => {
       if (ent.isIntersecting) {
@@ -59,40 +54,24 @@
       }
     });
   }
-
-  // Re-scan on DOM mutations
   new MutationObserver(() => requestAnimationFrame(initReveals))
     .observe(document.body, {childList: true, subtree: true});
 
-  /* === HEADER SHADOW ON SCROLL === */
+  /* === HEADER SHADOW === */
   const hdr = document.querySelector('header');
   if (hdr) {
     let ticking = false;
     window.addEventListener('scroll', () => {
       if (!ticking) {
         requestAnimationFrame(() => {
-          const y = window.scrollY;
-          hdr.style.boxShadow = y > 10
-            ? '0 4px 40px -10px rgba(0,0,0,0.6), 0 1px 0 rgba(249,115,22,0.05)'
-            : '';
+          hdr.style.boxShadow = window.scrollY > 10
+            ? '0 4px 40px -10px rgba(0,0,0,0.6), 0 1px 0 rgba(249,115,22,0.05)' : '';
           ticking = false;
         });
         ticking = true;
       }
     }, {passive: true});
   }
-
-  /* === TAB TRANSITIONS === */
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      const active = document.querySelector('.view.active');
-      if (active) {
-        active.style.animation = 'none';
-        active.offsetHeight;
-        active.style.animation = '';
-      }
-    });
-  });
 
   /* === KEYBOARD SHORTCUTS === */
   document.addEventListener('keydown', e => {
@@ -104,21 +83,7 @@
     }
   });
 
-  /* === SMOOTH NUMBER COUNTERS === */
-  window.animateNumber = function(el, target, duration = 800) {
-    const start = parseInt(el.textContent) || 0;
-    const range = target - start;
-    const t0 = performance.now();
-    function step(now) {
-      const progress = Math.min((now - t0) / duration, 1);
-      const eased = 1 - Math.pow(1 - progress, 4); // ease-out-quart
-      el.textContent = Math.round(start + range * eased);
-      if (progress < 1) requestAnimationFrame(step);
-    }
-    requestAnimationFrame(step);
-  };
-
-  /* === LOADING BAR (top of page) === */
+  /* === LOADING BAR === */
   const loadBar = document.createElement('div');
   loadBar.style.cssText = `
     position:fixed; top:0; left:0; height:2px; z-index:99999;
@@ -127,7 +92,6 @@
     box-shadow: 0 0 10px rgba(249,115,22,0.5);
   `;
   document.body.appendChild(loadBar);
-
   let reqCount = 0;
   const _fetch = window.fetch;
   window.fetch = function(...args) {
@@ -148,7 +112,7 @@
     });
   };
 
-  /* === TILT EFFECT ON CARDS === */
+  /* === CARD TILT === */
   document.addEventListener('mousemove', e => {
     const card = e.target.closest('.card, .shot');
     if (!card) return;
@@ -162,21 +126,7 @@
     if (card) card.style.transform = '';
   }, true);
 
-  /* === IMAGE LAZY LOAD WITH FADE === */
-  document.addEventListener('load', e => {
-    if (e.target.tagName === 'IMG') {
-      e.target.style.animation = 'scaleIn 0.3s ease-out';
-    }
-  }, true);
-
-  /* === INIT === */
   document.addEventListener('DOMContentLoaded', initReveals);
   setTimeout(initReveals, 500);
-
-  console.log(
-    '%c\u2728 Continuity Studio %cPRO %c\u2014 Enhanced',
-    'color:#f97316;font-weight:900;font-size:16px',
-    'color:#8b5cf6;font-weight:900;font-size:16px',
-    'color:#8b8b9e;font-size:12px'
-  );
+  console.log('%c\u2728 Continuity Studio %cPRO','color:#f97316;font-weight:900;font-size:16px','color:#8b5cf6;font-weight:900;font-size:16px');
 })();

@@ -6,7 +6,6 @@
    <link rel="stylesheet" href="/static/animations.css">
    ============================================================ */
 
-/* === DESIGN SYSTEM OVERRIDES === */
 :root {
   --bg: #050508 !important;
   --bg2: #0a0a10 !important;
@@ -23,8 +22,6 @@
   --red: #ef4444 !important;
   --violet: #8b5cf6 !important;
   --green: #10b981 !important;
-  
-  /* New design tokens */
   --glass: rgba(14,14,22,0.6);
   --glass-border: rgba(255,255,255,0.06);
   --glass-shine: rgba(255,255,255,0.03);
@@ -36,7 +33,6 @@
   --snappy: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* === KEYFRAMES === */
 @keyframes fadeUp { from { opacity:0; transform:translateY(24px) } to { opacity:1; transform:translateY(0) } }
 @keyframes fadeDown { from { opacity:0; transform:translateY(-12px) } to { opacity:1; transform:translateY(0) } }
 @keyframes scaleIn { from { opacity:0; transform:scale(0.9) } to { opacity:1; transform:scale(1) } }
@@ -47,22 +43,16 @@
 @keyframes glow { 0%,100%{box-shadow:0 0 8px rgba(249,115,22,0.3)} 50%{box-shadow:0 0 30px rgba(249,115,22,0.6),0 0 60px rgba(249,115,22,0.1)} }
 @keyframes borderPulse { 0%,100%{border-color:rgba(249,115,22,0.2)} 50%{border-color:rgba(249,115,22,0.7)} }
 @keyframes float { 0%,100%{transform:translateY(0) rotate(0deg)} 33%{transform:translateY(-4px) rotate(0.5deg)} 66%{transform:translateY(-2px) rotate(-0.3deg)} }
-@keyframes morph { 0%,100%{border-radius:60% 40% 30% 70%/60% 30% 70% 40%} 50%{border-radius:30% 60% 70% 40%/50% 60% 30% 60%} }
 @keyframes breathe { 0%,100%{opacity:0.3;transform:scale(1)} 50%{opacity:0.8;transform:scale(1.01)} }
 @keyframes spin { to{transform:rotate(360deg)} }
 @keyframes dotPulse { 0%,100%{transform:scale(1);opacity:1} 50%{transform:scale(1.6);opacity:0.5} }
 @keyframes rippleOut { 0%{transform:scale(0);opacity:0.6} 100%{transform:scale(4);opacity:0} }
-@keyframes gradient { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-@keyframes typeIn { from{width:0;opacity:0} to{width:100%;opacity:1} }
 @keyframes aurora {
   0%{background-position:50% 50%;filter:hue-rotate(0deg)}
   50%{background-position:60% 40%;filter:hue-rotate(15deg)}
   100%{background-position:50% 50%;filter:hue-rotate(0deg)}
 }
-@keyframes lineGrow { from{transform:scaleX(0)} to{transform:scaleX(1)} }
-@keyframes countUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
 
-/* === AMBIENT BACKGROUND === */
 body {
   background: #050508 !important;
   background-image:
@@ -70,26 +60,16 @@ body {
     radial-gradient(ellipse 60% 80% at 80% 70%, rgba(139,92,246,0.025) 0%, transparent 60%),
     radial-gradient(ellipse 70% 50% at 50% 90%, rgba(6,182,212,0.02) 0%, transparent 50%) !important;
 }
-body::before {
-  opacity: 0.015 !important;
-}
-/* Animated aurora blob */
 body::after {
   content: '';
-  position: fixed;
-  top: -30%;
-  left: -30%;
-  width: 160%;
-  height: 160%;
+  position: fixed; top: -30%; left: -30%; width: 160%; height: 160%;
   background: radial-gradient(ellipse at 30% 40%, rgba(249,115,22,0.035), transparent 50%),
               radial-gradient(ellipse at 70% 60%, rgba(139,92,246,0.03), transparent 50%),
               radial-gradient(ellipse at 50% 80%, rgba(6,182,212,0.025), transparent 40%);
   animation: aurora 30s ease-in-out infinite;
-  pointer-events: none;
-  z-index: -1;
+  pointer-events: none; z-index: -1;
 }
 
-/* === HEADER - Glass effect === */
 header {
   background: rgba(5,5,8,0.7) !important;
   backdrop-filter: blur(24px) saturate(1.8) !important;
@@ -104,69 +84,41 @@ header {
 }
 .filmstrip:hover {
   box-shadow: inset 0 0 0 3px var(--bg), 0 0 40px -2px rgba(249,115,22,0.5) !important;
-  transform: scale(1.1) rotate(3deg);
-  transition: all 0.4s var(--elastic);
+  transform: scale(1.1) rotate(3deg); transition: all 0.4s var(--elastic);
 }
-.wordmark { letter-spacing: -0.03em !important; }
-.pill {
-  background: var(--glass) !important;
-  backdrop-filter: blur(12px);
-  border: 1px solid var(--glass-border) !important;
-  transition: all 0.3s;
-}
-.pill:hover { border-color: rgba(249,115,22,0.3) !important; }
 .dot { animation: dotPulse 2s ease-in-out infinite !important; }
 
-/* === TABS - Sleek redesign === */
 nav.tabs { gap: 2px !important; }
 .tab {
   transition: all 0.3s var(--elastic) !important;
-  border-radius: 10px 10px 0 0 !important;
-  position: relative;
-  overflow: hidden;
+  position: relative; overflow: hidden;
 }
 .tab::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: 0;
-  height: 2px;
+  content: ''; position: absolute; bottom: 0; left: 50%;
+  width: 0; height: 2px;
   background: linear-gradient(90deg, var(--amber), var(--violet));
-  border-radius: 2px;
-  transform: translateX(-50%);
+  border-radius: 2px; transform: translateX(-50%);
   transition: width 0.4s var(--elastic);
 }
 .tab:hover::after { width: 60%; }
 .tab.active::after { width: 85%; height: 3px; box-shadow: var(--neon-amber); }
-.tab.active {
-  background: var(--glass) !important;
-  backdrop-filter: blur(12px);
-  transform: translateY(-1px);
-}
+.tab.active { background: var(--glass) !important; backdrop-filter: blur(12px); transform: translateY(-1px); }
 .tab:hover { transform: translateY(-2px); color: var(--ink) !important; }
 
-/* === PANELS & SHEETS === */
 .sheet {
-  background: rgba(10,10,16,0.8) !important;
-  backdrop-filter: blur(16px);
+  background: rgba(10,10,16,0.8) !important; backdrop-filter: blur(16px);
   border: 1px solid var(--glass-border) !important;
   box-shadow: 0 30px 80px -30px rgba(0,0,0,0.8), inset 0 1px 0 var(--glass-shine) !important;
   animation: scaleIn 0.4s var(--smooth);
 }
 .view.active { animation: fadeUp 0.35s var(--smooth); }
 
-/* === BUTTONS - Neon hover effects === */
 .btn {
-  position: relative;
-  overflow: hidden;
-  transition: all 0.35s var(--elastic) !important;
-  border-radius: 10px !important;
+  position: relative; overflow: hidden;
+  transition: all 0.35s var(--elastic) !important; border-radius: 10px !important;
 }
 .btn::before {
-  content: '';
-  position: absolute;
-  top: 0; left: -100%;
+  content: ''; position: absolute; top: 0; left: -100%;
   width: 100%; height: 100%;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,0.15), transparent);
   transition: left 0.6s ease;
@@ -176,53 +128,27 @@ nav.tabs { gap: 2px !important; }
   transform: translateY(-3px) scale(1.02) !important;
   box-shadow: var(--neon-amber), 0 20px 40px -15px rgba(0,0,0,0.5) !important;
 }
-.btn:active {
-  transform: translateY(-1px) scale(0.97) !important;
-  transition-duration: 0.1s !important;
-}
+.btn:active { transform: translateY(-1px) scale(0.97) !important; transition-duration: 0.1s !important; }
 .btn.violet:hover { box-shadow: var(--neon-violet), 0 20px 40px -15px rgba(0,0,0,0.5) !important; }
-.btn.outline:hover { box-shadow: var(--neon-amber) !important; }
 
-/* Ripple effect */
-.btn .ripple {
-  position: absolute;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.3);
-  animation: rippleOut 0.6s ease-out forwards;
-  pointer-events: none;
-}
-
-/* === CARDS - Glassmorphism === */
 .card, .shot {
-  background: var(--glass) !important;
-  backdrop-filter: blur(8px);
+  background: var(--glass) !important; backdrop-filter: blur(8px);
   border: 1px solid var(--glass-border) !important;
-  transition: all 0.4s var(--elastic) !important;
-  position: relative;
-  overflow: hidden;
+  transition: all 0.4s var(--elastic) !important; position: relative; overflow: hidden;
 }
 .card::before, .shot::before {
-  content: '';
-  position: absolute;
-  inset: 0;
+  content: ''; position: absolute; inset: 0;
   background: linear-gradient(135deg, rgba(255,255,255,0.03), transparent 60%);
-  pointer-events: none;
-  z-index: 1;
+  pointer-events: none; z-index: 1;
 }
 .card:hover, .shot:hover {
   transform: translateY(-8px) scale(1.01) !important;
   border-color: rgba(249,115,22,0.2) !important;
   box-shadow: 0 30px 70px -25px rgba(0,0,0,0.7), var(--neon-amber) !important;
 }
-.card .ph img, .shot .img img {
-  transition: transform 0.7s var(--elastic), filter 0.3s !important;
-}
-.card:hover .ph img, .shot:hover .img img {
-  transform: scale(1.1) !important;
-  filter: brightness(1.1);
-}
+.card .ph img, .shot .img img { transition: transform 0.7s var(--elastic), filter 0.3s !important; }
+.card:hover .ph img, .shot:hover .img img { transform: scale(1.1) !important; filter: brightness(1.1); }
 
-/* === FRAMES - Enhanced grid === */
 .frame {
   transition: all 0.35s var(--elastic) !important;
   border: 2px solid rgba(255,255,255,0.04) !important;
@@ -231,20 +157,11 @@ nav.tabs { gap: 2px !important; }
 .frame:hover {
   transform: translateY(-6px) scale(1.05) !important;
   box-shadow: 0 20px 50px -15px rgba(0,0,0,0.7), 0 0 20px -5px rgba(249,115,22,0.2) !important;
-  border-color: rgba(249,115,22,0.3) !important;
-  z-index: 20;
+  border-color: rgba(249,115,22,0.3) !important; z-index: 20;
 }
-.frame:hover img { filter: brightness(1.15) contrast(1.05); }
-.frame.sel {
-  border-color: var(--amber) !important;
-  animation: borderPulse 2.5s ease-in-out infinite;
-}
-.frame .tick {
-  animation: pop 0.35s var(--elastic);
-  box-shadow: 0 2px 12px rgba(249,115,22,0.5) !important;
-}
+.frame.sel { border-color: var(--amber) !important; animation: borderPulse 2.5s ease-in-out infinite; }
+.frame .tick { animation: pop 0.35s var(--elastic); }
 
-/* Staggered entrance */
 .frames .frame { animation: fadeUp 0.4s var(--smooth) both; }
 .frames .frame:nth-child(1){animation-delay:0s}
 .frames .frame:nth-child(2){animation-delay:.04s}
@@ -254,264 +171,104 @@ nav.tabs { gap: 2px !important; }
 .frames .frame:nth-child(6){animation-delay:.2s}
 .frames .frame:nth-child(7){animation-delay:.24s}
 .frames .frame:nth-child(8){animation-delay:.28s}
-.frames .frame:nth-child(9){animation-delay:.32s}
-.frames .frame:nth-child(10){animation-delay:.36s}
-.frames .frame:nth-child(n+11){animation-delay:.4s}
+.frames .frame:nth-child(n+9){animation-delay:.32s}
 
-/* === INPUTS - Glow focus === */
 textarea, input[type=text], input[type=password], input[type=number], select {
   background: rgba(5,5,8,0.8) !important;
   border: 1px solid rgba(255,255,255,0.06) !important;
   border-radius: 10px !important;
   transition: all 0.35s var(--elastic) !important;
-  backdrop-filter: blur(4px);
 }
 textarea:focus, input:focus, select:focus {
   border-color: var(--amber) !important;
   box-shadow: 0 0 0 3px rgba(249,115,22,0.1), var(--neon-amber), 0 10px 30px -10px rgba(0,0,0,0.4) !important;
-  transform: scale(1.003);
   background: rgba(5,5,8,0.95) !important;
 }
 
-/* === TOGGLE - Smooth === */
-.toggle {
-  transition: all 0.35s var(--elastic) !important;
-  background: var(--glass) !important;
-  border: 1px solid var(--glass-border) !important;
-}
-.toggle:hover { transform: scale(1.02); border-color: rgba(249,115,22,0.2) !important; }
-.toggle.on {
-  border-color: rgba(249,115,22,0.4) !important;
-  background: rgba(249,115,22,0.05) !important;
-  box-shadow: var(--neon-amber);
-}
+.toggle { transition: all 0.35s var(--elastic) !important; background: var(--glass) !important; }
+.toggle.on { border-color: rgba(249,115,22,0.4) !important; box-shadow: var(--neon-amber); }
 .switch::after { transition: all 0.4s var(--elastic) !important; }
 
-/* === TOASTS - Glass + slide === */
 .toast {
-  background: var(--glass) !important;
-  backdrop-filter: blur(20px) saturate(1.5) !important;
+  background: var(--glass) !important; backdrop-filter: blur(20px) saturate(1.5) !important;
   border: 1px solid var(--glass-border) !important;
   animation: fadeUp 0.4s var(--elastic) !important;
   box-shadow: 0 20px 50px -15px rgba(0,0,0,0.6) !important;
 }
-.toast.err {
-  border-color: rgba(239,68,68,0.4) !important;
-  box-shadow: 0 20px 50px -15px rgba(0,0,0,0.6), 0 0 30px -10px rgba(239,68,68,0.3) !important;
-}
-.toast.ok {
-  border-color: rgba(16,185,129,0.4) !important;
-  box-shadow: 0 20px 50px -15px rgba(0,0,0,0.6), 0 0 30px -10px rgba(16,185,129,0.3) !important;
-}
+.toast.err { border-color: rgba(239,68,68,0.4) !important; }
+.toast.ok { border-color: rgba(16,185,129,0.4) !important; }
 
-/* === MODAL - Cinematic entrance === */
 .modal-bg { backdrop-filter: blur(16px) saturate(0.8) !important; }
 .modal-bg.show { animation: scaleIn 0.25s var(--smooth); }
 .modal-bg.show .modal {
   animation: fadeUp 0.45s var(--elastic) 0.05s both;
-  background: var(--glass) !important;
-  backdrop-filter: blur(24px) !important;
+  background: var(--glass) !important; backdrop-filter: blur(24px) !important;
   border: 1px solid var(--glass-border) !important;
   box-shadow: 0 40px 100px -30px rgba(0,0,0,0.8), inset 0 1px 0 var(--glass-shine) !important;
 }
 
-/* === COMPOSER - Breathing focus === */
 .composer {
-  background: rgba(14,14,22,0.6) !important;
-  backdrop-filter: blur(8px);
-  border: 1px solid var(--glass-border) !important;
-  transition: all 0.4s var(--smooth) !important;
+  background: rgba(14,14,22,0.6) !important; backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-border) !important; transition: all 0.4s var(--smooth) !important;
 }
 .composer:focus-within {
   border-color: rgba(249,115,22,0.25) !important;
-  box-shadow: 0 0 40px -15px rgba(249,115,22,0.15), 0 20px 50px -20px rgba(0,0,0,0.4);
+  box-shadow: 0 0 40px -15px rgba(249,115,22,0.15);
 }
 
-/* === CHIPS - Float on hover === */
 .chip {
   transition: all 0.3s var(--elastic) !important;
-  background: var(--glass) !important;
-  border: 1px solid var(--glass-border) !important;
+  background: var(--glass) !important; border: 1px solid var(--glass-border) !important;
 }
-.chip:hover {
-  transform: translateY(-3px) scale(1.06) !important;
-  border-color: var(--amber) !important;
-  box-shadow: 0 8px 20px -8px rgba(249,115,22,0.3);
-}
+.chip:hover { transform: translateY(-3px) scale(1.06) !important; border-color: var(--amber) !important; }
 
-/* === STORYBOARD SHOTS - Alternating entrance === */
 .board .shot:nth-child(odd) { animation: slideL 0.5s var(--smooth) both; }
 .board .shot:nth-child(even) { animation: slideR 0.5s var(--smooth) both; }
 .board .shot:nth-child(1){animation-delay:0s}
 .board .shot:nth-child(2){animation-delay:.08s}
 .board .shot:nth-child(3){animation-delay:.16s}
 .board .shot:nth-child(4){animation-delay:.24s}
-.board .shot:nth-child(5){animation-delay:.32s}
 
-/* === SCENES/SCRIPT - Slide in === */
 .scenelet {
   animation: fadeUp 0.4s var(--smooth) both;
   transition: all 0.3s var(--smooth) !important;
-  background: var(--glass) !important;
-  border: 1px solid var(--glass-border) !important;
+  background: var(--glass) !important; border: 1px solid var(--glass-border) !important;
 }
-.scenelet:hover {
-  transform: translateX(6px) !important;
-  border-color: rgba(249,115,22,0.3) !important;
-  box-shadow: -4px 0 20px -8px rgba(249,115,22,0.2);
-}
-.scenes .scenelet:nth-child(1){animation-delay:0s}
-.scenes .scenelet:nth-child(2){animation-delay:.06s}
-.scenes .scenelet:nth-child(3){animation-delay:.12s}
-.scenes .scenelet:nth-child(4){animation-delay:.18s}
-.scenes .scenelet:nth-child(5){animation-delay:.24s}
+.scenelet:hover { transform: translateX(6px) !important; border-color: rgba(249,115,22,0.3) !important; }
 
-/* === CHARACTERS - Pop entrance === */
-.chars .card { animation: fadeUp 0.4s var(--elastic) both; }
-.chars .card:nth-child(1){animation-delay:0s}
-.chars .card:nth-child(2){animation-delay:.08s}
-.chars .card:nth-child(3){animation-delay:.16s}
-.chars .card:nth-child(4){animation-delay:.24s}
+.empty-state { animation: breathe 5s ease-in-out infinite; }
 
-/* === AUDIO CARD === */
-.audio-card {
-  background: var(--glass) !important;
-  border: 1px solid var(--glass-border) !important;
-  animation: scaleIn 0.4s var(--smooth);
-  transition: all 0.3s var(--smooth) !important;
-}
-.audio-card:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 16px 40px -15px rgba(0,0,0,0.5);
-}
-audio { border-radius: 8px; }
-audio::-webkit-media-controls-panel { background: rgba(14,14,22,0.9); }
-
-/* === VIDEO PLAYER === */
-.editvid {
-  border: 1px solid var(--glass-border) !important;
-  box-shadow: 0 30px 70px -25px rgba(0,0,0,0.7);
-  transition: all 0.3s var(--smooth) !important;
-}
-.editvid:hover {
-  box-shadow: 0 0 60px -15px rgba(249,115,22,0.15), 0 30px 80px -25px rgba(0,0,0,0.8);
-  border-color: rgba(249,115,22,0.15) !important;
-}
-
-/* === EMPTY STATE - Breathing === */
-.empty-state {
-  animation: breathe 5s ease-in-out infinite;
-  background: var(--glass) !important;
-  border: 1px dashed rgba(255,255,255,0.08) !important;
-}
-
-/* === BADGES === */
-.badge {
-  transition: all 0.2s var(--elastic) !important;
-}
-.badge:hover { transform: scale(1.1); }
-
-/* === SECTION HEADINGS === */
-h2.section {
-  position: relative;
-  display: inline-block;
-}
+h2.section { position: relative; display: inline-block; }
 h2.section::after {
-  content: '';
-  position: absolute;
-  bottom: -6px;
-  left: 0;
-  width: 0;
-  height: 3px;
+  content: ''; position: absolute; bottom: -6px; left: 0;
+  width: 0; height: 3px;
   background: linear-gradient(90deg, var(--amber), var(--violet));
-  border-radius: 3px;
-  transition: width 0.6s var(--elastic);
+  border-radius: 3px; transition: width 0.6s var(--elastic);
 }
 h2.section:hover::after { width: 100%; }
 
-/* === LOADING STATES === */
-.spin {
-  animation: spin 0.5s var(--snappy) infinite !important;
-}
-.loading-shimmer {
-  background: linear-gradient(90deg, rgba(14,14,22,1) 25%, rgba(20,20,32,1) 50%, rgba(14,14,22,1) 75%);
-  background-size: 200% 100%;
-  animation: shimmer 1.2s ease-in-out infinite;
-}
+.spin { animation: spin 0.5s var(--snappy) infinite !important; }
 
-/* === CURSOR GLOW === */
 .cursor-glow {
-  position: fixed;
-  width: 400px;
-  height: 400px;
-  border-radius: 50%;
+  position: fixed; width: 400px; height: 400px; border-radius: 50%;
   background: radial-gradient(circle, rgba(249,115,22,0.04) 0%, rgba(139,92,246,0.02) 30%, transparent 70%);
-  pointer-events: none;
-  z-index: 9998;
+  pointer-events: none; z-index: 9998;
   transform: translate(-50%, -50%);
   transition: left 0.1s linear, top 0.1s linear, opacity 0.4s;
-  opacity: 0;
-  mix-blend-mode: screen;
+  opacity: 0; mix-blend-mode: screen;
 }
 .cursor-glow.active { opacity: 1; }
 
-/* === SCROLLBAR === */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(255,255,255,0.06);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(249,115,22,0.3);
-}
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.06); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(249,115,22,0.3); }
 
-/* === SELECTION === */
-::selection {
-  background: rgba(249,115,22,0.9) !important;
-  color: #000 !important;
-}
-
-/* === SMOOTH PAGE === */
+::selection { background: rgba(249,115,22,0.9) !important; color: #000 !important; }
 main { animation: fadeUp 0.5s var(--smooth) 0.1s both; }
 
-/* === REVIEW MODAL FRAMES === */
-.rv-fr {
-  transition: all 0.3s var(--elastic) !important;
-}
-.rv-fr:hover {
-  transform: scale(1.05) translateY(-3px) !important;
-  box-shadow: 0 12px 30px -10px rgba(0,0,0,0.6);
-  z-index: 10;
-}
+.divider { background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent) !important; }
 
-/* === GHOST BUTTON GLOW === */
-.ghost-btn {
-  transition: all 0.3s var(--elastic) !important;
-  position: relative;
-  overflow: hidden;
-}
-.ghost-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, transparent, rgba(249,115,22,0.05), transparent);
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-.ghost-btn:hover::after { opacity: 1; }
-.ghost-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 25px -10px rgba(249,115,22,0.3) !important;
-}
-
-/* === DIVIDER GRADIENT === */
-.divider {
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent) !important;
-  height: 1px !important;
-}
-
-/* === REDUCED MOTION === */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
