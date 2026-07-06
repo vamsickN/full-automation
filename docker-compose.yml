@@ -1,0 +1,21 @@
+# Agent 6: DevOps - Docker Compose for local development
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - DATA_DIR=/app/data
+    restart: unless-stopped
+    mem_limit: 4g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
