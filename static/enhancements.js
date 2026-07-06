@@ -1,172 +1,182 @@
 /* ============================================================
-   CONTINUITY STUDIO PRO — UI Enhancement Script
-   Add to index.html before </body>:
-   <script src="/static/enhancements.js"></script>
+   AGENT 2: UI/DESIGN — Interactive Enhancements
+   Inject before </body>: <script src="/static/enhancements.js"></script>
    ============================================================ */
-
-(function() {
+;(function(){
   'use strict';
 
-  // === CURSOR GLOW EFFECT ===
+  /* === CURSOR GLOW === */
   const glow = document.createElement('div');
   glow.className = 'cursor-glow';
   document.body.appendChild(glow);
-
-  let glowTimeout;
-  document.addEventListener('mousemove', (e) => {
+  let glowTimer;
+  document.addEventListener('mousemove', e => {
     glow.style.left = e.clientX + 'px';
     glow.style.top = e.clientY + 'px';
     glow.classList.add('active');
-    clearTimeout(glowTimeout);
-    glowTimeout = setTimeout(() => glow.classList.remove('active'), 2000);
-  });
+    clearTimeout(glowTimer);
+    glowTimer = setTimeout(() => glow.classList.remove('active'), 3000);
+  }, {passive: true});
 
-  // === SCROLL REVEAL ===
-  const observerOptions = { threshold: 0.1, rootMargin: '0px 0px -50px 0px' };
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
-        observer.unobserve(entry.target);
-      }
-    });
-  }, observerOptions);
-
-  // Auto-add reveal class to cards and shots
-  function initReveal() {
-    document.querySelectorAll('.card, .shot, .scenelet, .audio-card').forEach(el => {
-      if (!el.classList.contains('reveal')) {
-        el.classList.add('reveal');
-        observer.observe(el);
-      }
-    });
-  }
-
-  // Re-run on DOM changes (for dynamically added content)
-  const mutationObserver = new MutationObserver(() => {
-    requestAnimationFrame(initReveal);
-  });
-  mutationObserver.observe(document.body, { childList: true, subtree: true });
-
-  // === RIPPLE EFFECT ON BUTTONS ===
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('.btn');
+  /* === BUTTON RIPPLE === */
+  document.addEventListener('mousedown', e => {
+    const btn = e.target.closest('.btn, .ghost-btn');
     if (!btn) return;
-
-    const ripple = document.createElement('span');
-    const rect = btn.getBoundingClientRect();
-    const size = Math.max(rect.width, rect.height);
-    const x = e.clientX - rect.left - size / 2;
-    const y = e.clientY - rect.top - size / 2;
-
-    ripple.style.cssText = `
-      position: absolute;
-      width: ${size}px;
-      height: ${size}px;
-      left: ${x}px;
-      top: ${y}px;
-      background: rgba(255,255,255,0.3);
-      border-radius: 50%;
-      transform: scale(0);
-      animation: ripple 0.6s ease-out;
-      pointer-events: none;
+    const r = btn.getBoundingClientRect();
+    const sz = Math.max(r.width, r.height) * 2;
+    const rip = document.createElement('span');
+    rip.className = 'ripple';
+    rip.style.cssText = `
+      position:absolute; border-radius:50%; pointer-events:none;
+      width:${sz}px; height:${sz}px;
+      left:${e.clientX - r.left - sz/2}px;
+      top:${e.clientY - r.top - sz/2}px;
+      background:rgba(255,255,255,0.2);
+      animation:rippleOut 0.6s ease-out forwards;
     `;
     btn.style.position = 'relative';
     btn.style.overflow = 'hidden';
-    btn.appendChild(ripple);
-    setTimeout(() => ripple.remove(), 600);
+    btn.appendChild(rip);
+    setTimeout(() => rip.remove(), 600);
   });
 
-  // === SMOOTH TAB TRANSITIONS ===
-  const originalTabClick = () => {
-    const tabs = document.querySelectorAll('.tab, .nav-tab');
-    tabs.forEach(tab => {
-      tab.addEventListener('click', () => {
-        // Add exit animation to current view
-        const activeView = document.querySelector('.view.active');
-        if (activeView) {
-          activeView.style.animation = 'none';
-          activeView.offsetHeight; // Force reflow
-          activeView.style.animation = '';
-        }
-      });
-    });
-  };
-  originalTabClick();
-
-  // === PARALLAX HEADER ===
-  const header = document.querySelector('header');
-  if (header) {
-    window.addEventListener('scroll', () => {
-      const scroll = window.scrollY;
-      if (scroll > 10) {
-        header.style.borderBottomColor = 'rgba(255,133,48,0.1)';
-        header.style.boxShadow = '0 4px 30px -10px rgba(0,0,0,0.5)';
-      } else {
-        header.style.borderBottomColor = '';
-        header.style.boxShadow = '';
+  /* === SCROLL REVEAL (IntersectionObserver) === */
+  const revealObs = new IntersectionObserver(entries => {
+    entries.forEach(ent => {
+      if (ent.isIntersecting) {
+        ent.target.style.animation = 'fadeUp 0.5s cubic-bezier(0.25,0.46,0.45,0.94) forwards';
+        revealObs.unobserve(ent.target);
       }
-    }, { passive: true });
+    });
+  }, {threshold: 0.08, rootMargin: '0px 0px -40px 0px'});
+
+  function initReveals() {
+    document.querySelectorAll('.card, .shot, .scenelet, .audio-card, .frame').forEach(el => {
+      if (!el.dataset.revealed) {
+        el.dataset.revealed = '1';
+        el.style.opacity = '0';
+        revealObs.observe(el);
+      }
+    });
   }
 
-  // === LOADING STATE ANIMATION ===
-  // Override fetch to add loading indicators
-  const originalFetch = window.fetch;
-  let activeRequests = 0;
+  // Re-scan on DOM mutations
+  new MutationObserver(() => requestAnimationFrame(initReveals))
+    .observe(document.body, {childList: true, subtree: true});
 
+  /* === HEADER SHADOW ON SCROLL === */
+  const hdr = document.querySelector('header');
+  if (hdr) {
+    let ticking = false;
+    window.addEventListener('scroll', () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          const y = window.scrollY;
+          hdr.style.boxShadow = y > 10
+            ? '0 4px 40px -10px rgba(0,0,0,0.6), 0 1px 0 rgba(249,115,22,0.05)'
+            : '';
+          ticking = false;
+        });
+        ticking = true;
+      }
+    }, {passive: true});
+  }
+
+  /* === TAB TRANSITIONS === */
+  document.querySelectorAll('.tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const active = document.querySelector('.view.active');
+      if (active) {
+        active.style.animation = 'none';
+        active.offsetHeight;
+        active.style.animation = '';
+      }
+    });
+  });
+
+  /* === KEYBOARD SHORTCUTS === */
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
+      e.preventDefault();
+      const tabs = document.querySelectorAll('.tab');
+      const i = parseInt(e.key) - 1;
+      if (tabs[i]) tabs[i].click();
+    }
+  });
+
+  /* === SMOOTH NUMBER COUNTERS === */
+  window.animateNumber = function(el, target, duration = 800) {
+    const start = parseInt(el.textContent) || 0;
+    const range = target - start;
+    const t0 = performance.now();
+    function step(now) {
+      const progress = Math.min((now - t0) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 4); // ease-out-quart
+      el.textContent = Math.round(start + range * eased);
+      if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  };
+
+  /* === LOADING BAR (top of page) === */
+  const loadBar = document.createElement('div');
+  loadBar.style.cssText = `
+    position:fixed; top:0; left:0; height:2px; z-index:99999;
+    background:linear-gradient(90deg, var(--amber,#f97316), var(--violet,#8b5cf6));
+    width:0; transition: width 0.3s, opacity 0.3s; opacity:0;
+    box-shadow: 0 0 10px rgba(249,115,22,0.5);
+  `;
+  document.body.appendChild(loadBar);
+
+  let reqCount = 0;
+  const _fetch = window.fetch;
   window.fetch = function(...args) {
     const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
     if (url.startsWith('/api/')) {
-      activeRequests++;
-      document.body.classList.add('is-loading');
+      reqCount++;
+      loadBar.style.opacity = '1';
+      loadBar.style.width = '70%';
     }
-    return originalFetch.apply(this, args).finally(() => {
+    return _fetch.apply(this, args).finally(() => {
       if (url.startsWith('/api/')) {
-        activeRequests--;
-        if (activeRequests <= 0) {
-          activeRequests = 0;
-          document.body.classList.remove('is-loading');
+        reqCount = Math.max(0, reqCount - 1);
+        if (reqCount === 0) {
+          loadBar.style.width = '100%';
+          setTimeout(() => { loadBar.style.opacity = '0'; loadBar.style.width = '0'; }, 300);
         }
       }
     });
   };
 
-  // === KEYBOARD SHORTCUTS ===
-  document.addEventListener('keydown', (e) => {
-    // Ctrl/Cmd + number to switch tabs
-    if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '9') {
-      e.preventDefault();
-      const tabs = document.querySelectorAll('.tab, .nav-tab');
-      const idx = parseInt(e.key) - 1;
-      if (tabs[idx]) tabs[idx].click();
+  /* === TILT EFFECT ON CARDS === */
+  document.addEventListener('mousemove', e => {
+    const card = e.target.closest('.card, .shot');
+    if (!card) return;
+    const r = card.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width - 0.5;
+    const y = (e.clientY - r.top) / r.height - 0.5;
+    card.style.transform = `perspective(800px) rotateY(${x*4}deg) rotateX(${-y*4}deg) translateY(-6px) scale(1.01)`;
+  }, {passive: true});
+  document.addEventListener('mouseleave', e => {
+    const card = e.target.closest('.card, .shot');
+    if (card) card.style.transform = '';
+  }, true);
+
+  /* === IMAGE LAZY LOAD WITH FADE === */
+  document.addEventListener('load', e => {
+    if (e.target.tagName === 'IMG') {
+      e.target.style.animation = 'scaleIn 0.3s ease-out';
     }
-  });
+  }, true);
 
-  // === FRAME COUNTER ANIMATION ===
-  function animateCounter(el, target) {
-    let current = 0;
-    const step = Math.max(1, Math.floor(target / 30));
-    const interval = setInterval(() => {
-      current += step;
-      if (current >= target) {
-        current = target;
-        clearInterval(interval);
-      }
-      el.textContent = current;
-    }, 30);
-  }
+  /* === INIT === */
+  document.addEventListener('DOMContentLoaded', initReveals);
+  setTimeout(initReveals, 500);
 
-  // Expose for use by the app
-  window.CSEnhancements = {
-    animateCounter,
-    initReveal,
-  };
-
-  // Init
-  document.addEventListener('DOMContentLoaded', initReveal);
-  setTimeout(initReveal, 1000); // Fallback for late-loaded content
-
-  console.log('%c✦ Continuity Studio Pro %c— Enhanced UI loaded', 
-    'color: #ff8530; font-weight: bold; font-size: 14px',
-    'color: #b0a8be; font-size: 12px');
+  console.log(
+    '%c\u2728 Continuity Studio %cPRO %c\u2014 Enhanced',
+    'color:#f97316;font-weight:900;font-size:16px',
+    'color:#8b5cf6;font-weight:900;font-size:16px',
+    'color:#8b8b9e;font-size:12px'
+  );
 })();
