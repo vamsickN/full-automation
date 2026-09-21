@@ -1,8 +1,4 @@
-"""Runtime hardening for the FastAPI app and its supported launchers.
-
-The wrapper installs this module after importing app.py, which lets us harden
-legacy route functions without duplicating the large application module.
-"""
+'''Runtime hardening for the FastAPI app and its supported launchers.'''
 import asyncio
 import base64
 import hashlib
@@ -14,6 +10,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from urllib.parse import unquote
 from typing import Optional
 
 from fastapi import Request
@@ -24,21 +21,20 @@ from starlette.responses import Response as StarletteResponse
 
 import config
 
-
 _SESSION_TTL_SECONDS = 30 * 86400
 try:
     _MAX_REVOKED_SESSIONS = max(
-        100, min(1_000_000, int(os.environ.get("SESSION_REVOKE_MAX", "10000"))))
+        100, min(1_000_000, int(os.environ.get('SESSION_REVOKE_MAX', '10000'))))
 except (TypeError, ValueError):
     _MAX_REVOKED_SESSIONS = 10_000
-_REVOKED_PATH = os.path.join(config.DATA_DIR, "revoked_sessions.json")
+_REVOKED_PATH = os.path.join(config.DATA_DIR, 'revoked_sessions.json')
 _REVOKED_LOCK = threading.RLock()
 _AUTH_FILE_LOCK = threading.RLock()
 _REVOKED_SESSIONS = {}
 
 
 def _token_digest(token: str) -> str:
-    return hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+    return hashlib.sha256(str(token).encode('utf-8')).hexdigest()
 
 
 def _prune_revoked_locked(now=None):
@@ -62,21 +58,21 @@ def _prune_revoked_locked(now=None):
 
 
 def _persist_revoked_locked():
-    directory = os.path.dirname(_REVOKED_PATH) or "."
+    directory = os.path.dirname(_REVOKED_PATH) or '.'
     os.makedirs(directory, exist_ok=True)
     fd = None
     tmp_path = None
     try:
-        fd, tmp_path = tempfile.mkstemp(dir=directory, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        fd, tmp_path = tempfile.mkstemp(dir=directory, suffix='.tmp')
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
             fd = None
-            json.dump(_REVOKED_SESSIONS, f, separators=(",", ":"))
+            json.dump(_REVOKED_SESSIONS, f, separators=(',', ':'))
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp_path, _REVOKED_PATH)
         tmp_path = None
     except Exception as exc:
-        print(f"[security] could not persist session revocations: {exc}", flush=True)
+        print(f'[security] could not persist session revocations: {exc}', flush=True)
     finally:
         if fd is not None:
             try:
@@ -92,7 +88,7 @@ def _persist_revoked_locked():
 
 def _load_revoked_sessions():
     try:
-        with open(_REVOKED_PATH, "r", encoding="utf-8") as f:
+        with open(_REVOKED_PATH, 'r', encoding='utf-8') as f:
             raw = json.load(f)
     except (FileNotFoundError, OSError, ValueError, TypeError):
         return
@@ -136,34 +132,34 @@ _load_revoked_sessions()
 
 def _sign_session(secret: bytes, email: str) -> str:
     payload = {
-        "email": email,
-        "exp": int(time.time()) + _SESSION_TTL_SECONDS,
-        "jti": secrets.token_urlsafe(16),
+        'email': email,
+        'exp': int(time.time()) + _SESSION_TTL_SECONDS,
+        'jti': secrets.token_urlsafe(16),
     }
-    raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    encoded = base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
-    sig = hmac.new(secret, encoded.encode("ascii"), hashlib.sha256).hexdigest()
-    return f"{encoded}.{sig}"
+    raw = json.dumps(payload, separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    encoded = base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+    sig = hmac.new(secret, encoded.encode('ascii'), hashlib.sha256).hexdigest()
+    return f'{encoded}.{sig}'
 
 
 def _verify_session(secret: bytes, token: str) -> Optional[str]:
-    if not token or "." not in token or _is_revoked(token):
+    if not token or '.' not in token or _is_revoked(token):
         return None
-    payload, sig = token.rsplit(".", 1)
+    payload, sig = token.rsplit('.', 1)
     try:
-        payload_bytes = payload.encode("ascii")
+        payload_bytes = payload.encode('ascii')
     except UnicodeEncodeError:
         return None
     expected = hmac.new(secret, payload_bytes, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(sig, expected):
         return None
     try:
-        padded = payload + "=" * (-len(payload) % 4)
-        data = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        padded = payload + '=' * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded).decode('utf-8'))
         if not isinstance(data, dict):
             return None
-        email = data.get("email")
-        exp = int(data.get("exp") or 0)
+        email = data.get('email')
+        exp = int(data.get('exp') or 0)
     except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         return None
     if not isinstance(email, str) or not email or exp <= int(time.time()):
@@ -172,20 +168,20 @@ def _verify_session(secret: bytes, token: str) -> Optional[str]:
 
 
 def _cookie_secure_enabled():
-    return (os.environ.get("COOKIE_SECURE", "").strip().lower()
-            in ("1", "true", "yes")) or (
-        os.environ.get("CS_ENV", "").strip().lower() == "production")
+    return (os.environ.get('COOKIE_SECURE', '').strip().lower()
+            in ('1', 'true', 'yes')) or (
+        os.environ.get('CS_ENV', '').strip().lower() == 'production')
 
 
 def _install_secure_cookie_hook():
-    if getattr(StarletteResponse, "_bugwatch_cookie_hook", False):
+    if getattr(StarletteResponse, '_bugwatch_cookie_hook', False):
         return
     original = StarletteResponse.set_cookie
 
     def secure_set_cookie(self, *args, **kwargs):
-        key = args[0] if args else kwargs.get("key")
-        if key == "cs_session" and _cookie_secure_enabled():
-            kwargs["secure"] = True
+        key = args[0] if args else kwargs.get('key')
+        if key == 'cs_session' and _cookie_secure_enabled():
+            kwargs['secure'] = True
         return original(self, *args, **kwargs)
 
     StarletteResponse.set_cookie = secure_set_cookie
@@ -193,30 +189,30 @@ def _install_secure_cookie_hook():
 
 
 def _install_upload_validation():
-    if getattr(StarletteUploadFile, "_bugwatch_upload_hook", False):
+    if getattr(StarletteUploadFile, '_bugwatch_upload_hook', False):
         return
     import security
     from fastapi import HTTPException
 
     original = StarletteUploadFile.read
-    video_exts = {".mp4", ".webm", ".mov", ".avi", ".mkv", ".mpeg", ".mpg"}
-    image_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
-    audio_exts = {".mp3", ".wav", ".ogg", ".webm", ".m4a", ".mp4"}
+    video_exts = {'.mp4', '.webm', '.mov', '.avi', '.mkv', '.mpeg', '.mpg'}
+    image_exts = {'.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp'}
+    audio_exts = {'.mp3', '.wav', '.ogg', '.webm', '.m4a', '.mp4'}
 
     async def validated_read(self, *args, **kwargs):
-        filename = getattr(self, "filename", "") or ""
-        content_type = (getattr(self, "content_type", "") or "").split(";", 1)[0].strip().lower()
+        filename = getattr(self, 'filename', '') or ''
+        content_type = (getattr(self, 'content_type', '') or '').split(';', 1)[0].strip().lower()
         ext = os.path.splitext(filename)[1].lower()
-        if content_type.startswith("video/") or ext in video_exts:
+        if content_type.startswith('video/') or ext in video_exts:
             allowed = security.ALLOWED_VIDEO_MIMES
-        elif content_type.startswith("image/") or ext in image_exts:
+        elif content_type.startswith('image/') or ext in image_exts:
             allowed = security.ALLOWED_IMAGE_MIMES
-        elif content_type.startswith("audio/") or ext in audio_exts:
+        elif content_type.startswith('audio/') or ext in audio_exts:
             allowed = security.ALLOWED_AUDIO_MIMES
         else:
-            raise HTTPException(415, "Unsupported upload type")
-        if not content_type or content_type in {"application/octet-stream", "application/binary"}:
-            content_type = security.EXTENSION_MIMES.get(ext, "")
+            raise HTTPException(415, 'Unsupported upload type')
+        if not content_type or content_type in {'application/octet-stream', 'application/binary'}:
+            content_type = security.EXTENSION_MIMES.get(ext, '')
         ok, message = security.validate_upload(filename, content_type, allowed)
         if not ok:
             raise HTTPException(415, message)
@@ -232,8 +228,8 @@ def _install_safe_app_hooks(app_module):
     except Exception:
         store = None
 
-    if callable(getattr(app_module, "load_vault", None)) and not getattr(
-            app_module, "_bugwatch_safe_vault", False):
+    if callable(getattr(app_module, 'load_vault', None)) and not getattr(
+            app_module, '_bugwatch_safe_vault', False):
         original_load_vault = app_module.load_vault
 
         def safe_load_vault():
@@ -241,19 +237,19 @@ def _install_safe_app_hooks(app_module):
                 data = original_load_vault()
                 return data if isinstance(data, dict) else {}
             except Exception as exc:
-                print(f"[security] vault load failed safely: {type(exc).__name__}", flush=True)
+                print(f'[security] vault load failed safely: {type(exc).__name__}', flush=True)
                 return {}
 
         app_module.load_vault = safe_load_vault
         app_module._bugwatch_safe_vault = True
 
-    if store is not None and not getattr(app_module, "_bugwatch_atomic_auth_files", False):
+    if store is not None and not getattr(app_module, '_bugwatch_atomic_auth_files', False):
         def _config_path(name):
             return os.path.join(app_module._config_dir(), name)
 
         def _safe_load(name):
             try:
-                with open(_config_path(name), "r", encoding="utf-8") as f:
+                with open(_config_path(name), 'r', encoding='utf-8') as f:
                     value = json.load(f)
                 return value if isinstance(value, dict) else {}
             except (OSError, ValueError, TypeError):
@@ -263,22 +259,22 @@ def _install_safe_app_hooks(app_module):
             with _AUTH_FILE_LOCK:
                 store._atomic_write_json(_config_path(name), value)
 
-        app_module.load_users = lambda: _safe_load("users.json")
-        app_module.load_codes = lambda: _safe_load("codes.json")
-        app_module.save_users = lambda value: _safe_save("users.json", value)
-        app_module.save_codes = lambda value: _safe_save("codes.json", value)
+        app_module.load_users = lambda: _safe_load('users.json')
+        app_module.load_codes = lambda: _safe_load('codes.json')
+        app_module.save_users = lambda value: _safe_save('users.json', value)
+        app_module.save_codes = lambda value: _safe_save('codes.json', value)
 
         def _safe_save_vault(value):
             import vault_crypto
             with _AUTH_FILE_LOCK:
                 store._atomic_write_json(
-                    _config_path("vault.json"), vault_crypto.encrypt_vault(value))
+                    _config_path('vault.json'), vault_crypto.encrypt_vault(value))
 
         app_module.save_vault = _safe_save_vault
         app_module._bugwatch_atomic_auth_files = True
 
-    if callable(getattr(app_module, "_run_capture", None)) and not getattr(
-            app_module, "_bugwatch_safe_capture", False):
+    if callable(getattr(app_module, '_run_capture', None)) and not getattr(
+            app_module, '_bugwatch_safe_capture', False):
         import process_manager
 
         def safe_capture(args, timeout=600):
@@ -294,8 +290,8 @@ def _install_safe_app_hooks(app_module):
         import editor
         import video
         for module in (editor, video):
-            if callable(getattr(module, "_run", None)) and not getattr(
-                    module, "_bugwatch_safe_process", False):
+            if callable(getattr(module, '_run', None)) and not getattr(
+                    module, '_bugwatch_safe_process', False):
                 def _safe_module_run(cmd, timeout, what, _pm=process_manager):
                     result = _pm.run_safe(list(cmd), timeout=timeout)
                     return subprocess.CompletedProcess(
@@ -303,15 +299,15 @@ def _install_safe_app_hooks(app_module):
                 module._run = _safe_module_run
                 module._bugwatch_safe_process = True
         import punchup
-        if callable(getattr(punchup, "_run", None)) and not getattr(
-                punchup, "_bugwatch_safe_process", False):
+        if callable(getattr(punchup, '_run', None)) and not getattr(
+                punchup, '_bugwatch_safe_process', False):
             def _safe_punchup_run(cmd, _pm=process_manager):
                 result = _pm.run_safe(list(cmd), timeout=120)
                 completed = subprocess.CompletedProcess(
                     cmd, result.returncode, result.stdout, result.stderr)
                 if result.returncode != 0:
                     raise RuntimeError(
-                        f"ffmpeg failed:\n{' '.join(cmd)[:300]}\n{result.stderr[-700:]}")
+                        f'ffmpeg failed:\n{" ".join(cmd)[:300]}\n{result.stderr[-700:]}')
                 return completed
             punchup._run = _safe_punchup_run
             punchup._bugwatch_safe_process = True
@@ -321,7 +317,7 @@ def _install_safe_app_hooks(app_module):
     try:
         import audio_gen
         import store
-        if not getattr(audio_gen, "_bugwatch_audio_scope", False):
+        if not getattr(audio_gen, '_bugwatch_audio_scope', False):
             def scoped_audio_dir():
                 d = os.path.join(store.storage_root(), audio_gen.AUDIO_GEN_DIR_NAME)
                 os.makedirs(d, exist_ok=True)
@@ -331,11 +327,11 @@ def _install_safe_app_hooks(app_module):
 
             def scoped_write_audio(*args, **kwargs):
                 meta = original_write_audio(*args, **kwargs)
-                if store.current_scope() and meta.get("path"):
-                    rel = os.path.relpath(meta["path"], store.DATA_DIR).replace(os.sep, "/")
-                    meta["url"] = f"/data/{rel}"
+                if store.current_scope() and meta.get('path'):
+                    rel = os.path.relpath(meta['path'], store.DATA_DIR).replace(os.sep, '/')
+                    meta['url'] = f'/data/{rel}'
                     try:
-                        with open(meta["path"] + ".json", "w", encoding="utf-8") as f:
+                        with open(meta['path'] + '.json', 'w', encoding='utf-8') as f:
                             json.dump(meta, f, indent=2)
                     except Exception:
                         pass
@@ -352,7 +348,7 @@ def _install_safe_app_hooks(app_module):
 
 
 def _install_api_error_handlers(app_module):
-    if getattr(app_module, "_bugwatch_api_errors", False):
+    if getattr(app_module, '_bugwatch_api_errors', False):
         return
     try:
         from fastapi import HTTPException
@@ -362,16 +358,16 @@ def _install_api_error_handlers(app_module):
         async def http_error_handler(_request, exc):
             detail = exc.detail
             if isinstance(detail, dict):
-                return error("Request failed", status=exc.status_code, details=detail)
-            return error(str(detail or "Request failed"), status=exc.status_code)
+                return error('Request failed', status=exc.status_code, details=detail)
+            return error(str(detail or 'Request failed'), status=exc.status_code)
 
         async def validation_error_handler(_request, exc):
-            return error("Request validation failed", status=422,
-                         details={"errors": exc.errors()})
+            return error('Request validation failed', status=422,
+                         details={'errors': exc.errors()})
 
         async def generic_error_handler(_request, exc):
-            print(f"[security] unhandled request error: {type(exc).__name__}", flush=True)
-            return error("Internal server error", status=500)
+            print(f'[security] unhandled request error: {type(exc).__name__}', flush=True)
+            return error('Internal server error', status=500)
 
         app_module.app.add_exception_handler(HTTPException, http_error_handler)
         app_module.app.add_exception_handler(RequestValidationError,
@@ -385,57 +381,56 @@ def _install_api_error_handlers(app_module):
 async def _inject_live_catalogs(request, response):
     if response.status_code >= 400:
         return response
-    ctype = response.headers.get("content-type", "")
-    if "json" not in ctype:
+    ctype = response.headers.get('content-type', '')
+    if 'json' not in ctype:
         return response
-    body = b""
+    body = b''
     async for chunk in response.body_iterator:
         body += chunk
     try:
-        payload = json.loads(body.decode("utf-8"))
+        payload = json.loads(body.decode('utf-8'))
     except (UnicodeDecodeError, ValueError, TypeError):
         return StarletteResponse(
             content=body, status_code=response.status_code,
             headers={k: v for k, v in response.headers.items()
-                     if k.lower() != "content-length"},
-            media_type=ctype.split(";", 1)[0] or "application/json")
-    if isinstance(payload, dict) and isinstance(payload.get("config"), dict):
+                     if k.lower() != 'content-length'},
+            media_type=ctype.split(';', 1)[0] or 'application/json')
+    if isinstance(payload, dict) and isinstance(payload.get('config'), dict):
         try:
             import model_catalog
-            settings = getattr(request.state, "settings", {}) or {}
+            settings = getattr(request.state, 'settings', {}) or {}
             catalogs = await asyncio.to_thread(
                 model_catalog.catalogs_for_settings, settings)
-            payload["config"].update(catalogs)
+            payload['config'].update(catalogs)
         except Exception:
             pass
     headers = {k: v for k, v in response.headers.items()
-               if k.lower() not in {"content-length", "content-type"}}
+               if k.lower() not in {'content-length', 'content-type'}}
     return JSONResponse(content=payload, status_code=response.status_code,
                         headers=headers)
 
 
 def _install_queue_scope(app_module):
-    """Attach the current account to queue jobs and enforce owner checks."""
     try:
         import store
         queue = app_module.image_queue.QUEUE
     except Exception:
         return
-    if getattr(queue, "_bugwatch_scope_patched", False):
+    if getattr(queue, '_bugwatch_scope_patched', False):
         return
 
-    snapshot = getattr(app_module, "_img_settings_snapshot", None)
+    snapshot = getattr(app_module, '_img_settings_snapshot', None)
     if callable(snapshot):
         def scoped_snapshot(request):
             settings = dict(snapshot(request) or {})
-            settings["_tenant_email"] = store.current_scope()
+            settings['_tenant_email'] = store.current_scope()
             return settings
         app_module._img_settings_snapshot = scoped_snapshot
 
     original_submit = queue.submit
     def scoped_submit(prompts, params, settings, project_id, metas=None):
         scoped = dict(settings or {})
-        scoped["_tenant_email"] = store.current_scope()
+        scoped['_tenant_email'] = store.current_scope()
         return original_submit(prompts, params, scoped, project_id, metas)
     queue.submit = scoped_submit
 
@@ -444,7 +439,7 @@ def _install_queue_scope(app_module):
         batch = original_get(batch_id)
         if batch is None:
             return None
-        owner = (queue._settings.get(batch_id) or {}).get("_tenant_email", "")
+        owner = (queue._settings.get(batch_id) or {}).get('_tenant_email', '')
         if config.AUTH_REQUIRED and owner != store.current_scope():
             return None
         return batch
@@ -460,7 +455,7 @@ def _install_queue_scope(app_module):
     original_retry_job = queue.retry_job
     def owned_retry_job(job_id, settings=None):
         job = queue._jobs.get(job_id)
-        owner = ((queue._settings.get(job.batch_id) or {}).get("_tenant_email", "")
+        owner = ((queue._settings.get(job.batch_id) or {}).get('_tenant_email', '')
                  if job else None)
         if config.AUTH_REQUIRED and owner != store.current_scope():
             return False
@@ -477,7 +472,7 @@ def _install_queue_scope(app_module):
     render_fn = queue._render_fn
     if callable(render_fn):
         def scoped_render(prompt, params, settings, project_id):
-            token = store.set_user_scope((settings or {}).get("_tenant_email", ""))
+            token = store.set_user_scope((settings or {}).get('_tenant_email', ''))
             try:
                 return render_fn(prompt, params, settings, project_id)
             finally:
@@ -486,8 +481,36 @@ def _install_queue_scope(app_module):
     queue._bugwatch_scope_patched = True
 
 
+def _canonical_data_path_allowed(path: str, email: Optional[str]) -> bool:
+    '''Allow only canonical paths inside the authenticated tenant root.'''
+    if path == '/data':
+        return True
+    if not path.startswith('/data/') or not config.AUTH_REQUIRED or not email:
+        return not config.AUTH_REQUIRED
+    decoded = path
+    for _ in range(3):
+        next_path = unquote(decoded)
+        if next_path == decoded:
+            break
+        decoded = next_path
+    if '\x00' in decoded or '\\' in decoded:
+        return False
+    import store
+    sid = store.scope_id(email)
+    if not sid:
+        return False
+    data_root = os.path.realpath(os.fspath(config.DATA_DIR))
+    tenant_root = os.path.realpath(os.path.join(data_root, 'users', sid))
+    relative = decoded[len('/data/'):]
+    candidate = os.path.realpath(os.path.join(data_root, *relative.split('/')))
+    try:
+        return os.path.commonpath((candidate, tenant_root)) == tenant_root
+    except ValueError:
+        return False
+
+
 class RuntimeSecurityMiddleware(BaseHTTPMiddleware):
-    """Protect mounted data, auth attempts, and request account scope."""
+    '''Protect mounted data, auth attempts, and request account scope.'''
 
     def __init__(self, app, verify_fn):
         super().__init__(app)
@@ -495,11 +518,11 @@ class RuntimeSecurityMiddleware(BaseHTTPMiddleware):
 
     async def _call_scoped(self, request, call_next, email):
         path = request.url.path
-        if not (path.startswith("/api/") or path == "/data"
-                or path.startswith("/data/")):
+        if not (path.startswith('/api/') or path == '/data'
+                or path.startswith('/data/')):
             return await call_next(request)
         import store
-        scope_token = store.set_user_scope(email or "")
+        scope_token = store.set_user_scope(email or '')
         try:
             return await call_next(request)
         finally:
@@ -507,40 +530,37 @@ class RuntimeSecurityMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
-        token = request.cookies.get("cs_session", "")
+        token = request.cookies.get('cs_session', '')
         email = self._verify_fn(token) if token else None
 
-        if (request.method == "POST" and path == "/api/auth/logout"
+        if (request.method == 'POST' and path == '/api/auth/logout'
                 and token and email):
             _revoke(token)
 
-        if path == "/data" or path.startswith("/data/"):
+        if path == '/data' or path.startswith('/data/'):
             if config.AUTH_REQUIRED and not email:
-                return JSONResponse({"ok": False, "error": "login required"}, status_code=401)
-            if config.AUTH_REQUIRED:
-                import store
-                prefix = store.scope_url_prefix(email)
-                if path != "/data" and not path.startswith(prefix):
-                    return JSONResponse({"ok": False, "error": "media not found"}, status_code=404)
+                return JSONResponse({'ok': False, 'error': 'login required'}, status_code=401)
+            if config.AUTH_REQUIRED and not _canonical_data_path_allowed(path, email):
+                return JSONResponse({'ok': False, 'error': 'media not found'}, status_code=404)
 
         limiter = None
         client_ip = None
-        if path == "/api/auth/login" or path == "/api/auth/signup":
+        if path == '/api/auth/login' or path == '/api/auth/signup':
             import security
-            limiter = (security.login_limiter if path.endswith("/login")
+            limiter = (security.login_limiter if path.endswith('/login')
                        else security.signup_limiter)
             client_ip = security.get_client_ip(request)
             if limiter.is_blocked(client_ip):
                 return JSONResponse(
-                    {"ok": False, "error": "Too many attempts. Try again later."},
-                    status_code=429, headers={"Retry-After": "300"})
+                    {'ok': False, 'error': 'Too many attempts. Try again later.'},
+                    status_code=429, headers={'Retry-After': '300'})
             limiter.record(client_ip)
 
         try:
             response = await self._call_scoped(request, call_next, email)
         except Exception:
             raise
-        if path == "/api/state":
+        if path == '/api/state':
             response = await _inject_live_catalogs(request, response)
         if limiter is not None and response.status_code < 400:
             limiter.reset(client_ip)
@@ -548,8 +568,7 @@ class RuntimeSecurityMiddleware(BaseHTTPMiddleware):
 
 
 def install(app_module) -> None:
-    """Install all wrapper hardening once."""
-    if getattr(app_module, "_bugwatch_runtime_security", False):
+    if getattr(app_module, '_bugwatch_runtime_security', False):
         return
     secret = app_module._SESSION_KEY
 
